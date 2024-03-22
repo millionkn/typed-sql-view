@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "es2016",
+    "module": "Node16",
+    "moduleResolution":"Node16",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "alwaysStrict": true,
+    "skipLibCheck": true,
+    "sourceRoot": "./test",
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "sourceMap": true,
+    "composite": true,
+    "types": [
+      "node",
+    ],
+    "lib": [
+      "ESNext",
+    ]
+  },
+  "include": [
+    "./test/*.ts",
+  ],
+  "references": [
+    {
+      "path": "./tsconfig.json",
+    }
+  ],
+}
