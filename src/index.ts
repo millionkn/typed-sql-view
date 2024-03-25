@@ -1,1 +1,2 @@
-export { SqlView, createFromDefine } from './sqlView.js'
+export { SqlView } from './sqlView.js'
+export { createFromDefine } from './createFromDefine.js'
