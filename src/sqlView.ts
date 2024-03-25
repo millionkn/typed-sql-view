@@ -1,4 +1,3 @@
-import { bracketIf } from "./bracketIf.js";
 import { SqlBody } from "./sqlBody.js";
 import { Column, ColumnDeclareFun, GetRefStr, Relation, SqlState, SqlViewTemplate, hasOneOf, pickConfig, resolveExpr } from "./tools.js";
 
@@ -74,31 +73,18 @@ export class SqlView<VT1 extends SqlViewTemplate> {
             .map((e) => typeof e === 'object' && extra.columnArr.includes(e.value) && e.value)
             .filter((e): e is Column => !!e)
           )
-
-          const baseBody = bracketIf({
+          const baseBody = base.analysis({
+            order: ctx.order,
             usedColumn: usedBaseColumn,
-            sqlBody: base.analysis({
-              order: ctx.order,
-              usedColumn: usedBaseColumn,
-            }),
-            useWrap: ({ state }) => {
-              return pickConfig(mode satisfies "inner" | "left" | "lazy", {
-                'left': () => hasOneOf(state, ['where', 'groupBy', 'having', 'order', 'skip', 'take']),
-                'lazy': () => hasOneOf(state, ['where', 'leftJoin', 'innerJoin', 'groupBy', 'having', 'skip', 'take']),
-                'inner': () => hasOneOf(state, ['groupBy', 'having', 'order', 'skip', 'take']),
-              })
-            }
-          })
-          const extraBody = bracketIf(usedExtraColumn, extra.analysis({
+          }).bracketIf(usedBaseColumn, ({ state }) => hasOneOf(state, ['where', 'groupBy', 'having', 'order', 'skip', 'take']))
+          const extraBody = extra.analysis({
             order: pickConfig(mode satisfies "inner" | "left" | "lazy", {
               'lazy': () => false,
               'left': () => ctx.order,
               'inner': () => ctx.order,
             }),
             usedColumn: usedExtraColumn.concat(usedExtraColumn),
-          }), ({ state }) => {
-
-          })
+          }).bracketIf(usedExtraColumn, ({ state }) => hasOneOf(state, ['where', 'groupBy', 'having', 'order', 'skip', 'take']))
 
         },
       }

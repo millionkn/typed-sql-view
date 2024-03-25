@@ -1,4 +1,4 @@
-import { Resolvable, SqlState, SqlContext, exec } from "./tools.js"
+import { Resolvable, SqlState, SqlContext, exec, Column } from "./tools.js"
 
 export class SqlBody {
   constructor(public opts: {
@@ -23,7 +23,7 @@ export class SqlBody {
     skip: number,
   }) { }
 
-  state() {
+  private state() {
     const base = this.opts
     const stateArr: SqlState[] = []
     if (base.join.some((e) => e.type === 'inner')) { stateArr.push('innerJoin') }
@@ -35,6 +35,31 @@ export class SqlBody {
     if ((base.skip ?? 0) > 0) { stateArr.push('skip') }
     if (base.take !== null) { stateArr.push('take') }
     return stateArr
+  }
+
+  bracketIf(usedColumn: Column[], condation: (opts: { state: SqlState[] }) => boolean) {
+    if (!condation({ state: this.state() })) { return }
+    const aliasSym = {}
+    const mapper = new Map([...new Set(usedColumn)].map((column, index) => {
+      const resolvable = Column.getResolvable(column)
+      const alias = `value_${index}`
+      Column.setResolvable(column, ({ resolveSym }) => `"${resolveSym(aliasSym)}"."${alias}"`);
+      return [resolvable, alias]
+    }))
+    const body = new SqlBody(this.opts)
+    this.opts = {
+      from: {
+        aliasSym,
+        resolvable: (ctx) => `(${body.build(mapper, ctx)})`,
+      },
+      join: [],
+      where: [],
+      groupBy: [],
+      having: [],
+      order: [],
+      take: null,
+      skip: 0,
+    }
   }
 
   build(select: Map<Resolvable, string>, ctx: SqlContext) {
