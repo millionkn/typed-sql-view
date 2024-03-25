@@ -23,6 +23,7 @@ export function createFromDefine<VT extends SqlViewTemplate>(
         const sym = {}
         ctx.usedColumn.forEach((column) => Column.setResolvable(column, ({ resolveSym }) => info.get(column)!.columnExpr(resolveSym(sym))))
         return new SqlBody({
+          usedColumn: ctx.usedColumn,
           from: {
             aliasSym: sym,
             resolvable: () => rawFrom,

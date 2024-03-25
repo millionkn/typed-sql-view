@@ -3,7 +3,7 @@ import { Column, ColumnDeclareFun, GetRefStr, Relation, SqlState, SqlViewTemplat
 
 export class SqlView<VT1 extends SqlViewTemplate> {
   constructor(
-    private buildTemplate: () => {
+    private createBuildCtx: () => {
       template: VT1,
       columnArr: Column[],
       analysis: (ctx: {
@@ -47,8 +47,8 @@ export class SqlView<VT1 extends SqlViewTemplate> {
     }) => string,
   ): SqlView<{ base: VT1, extra: Relation<N, VT2> }> => {
     return new SqlView(() => {
-      const base = this.buildTemplate()
-      const extra = view.buildTemplate()
+      const base = this.createBuildCtx()
+      const extra = view.createBuildCtx()
       return {
         template: {
           base: base.template,
@@ -73,19 +73,41 @@ export class SqlView<VT1 extends SqlViewTemplate> {
             .map((e) => typeof e === 'object' && extra.columnArr.includes(e.value) && e.value)
             .filter((e): e is Column => !!e)
           )
-          const baseBody = base.analysis({
+          let baseBody = base.analysis({
             order: ctx.order,
             usedColumn: usedBaseColumn,
-          }).bracketIf(usedBaseColumn, ({ state }) => hasOneOf(state, ['where', 'groupBy', 'having', 'order', 'skip', 'take']))
-          const extraBody = extra.analysis({
-            order: pickConfig(mode satisfies "inner" | "left" | "lazy", {
-              'lazy': () => false,
-              'left': () => ctx.order,
-              'inner': () => ctx.order,
+          })
+          let extraBody = pickConfig(mode satisfies "inner" | "left" | "lazy", {
+            'lazy': () => extra.analysis({
+              usedColumn: usedExtraColumn,
+              order: false,
             }),
-            usedColumn: usedExtraColumn.concat(usedExtraColumn),
-          }).bracketIf(usedExtraColumn, ({ state }) => hasOneOf(state, ['where', 'groupBy', 'having', 'order', 'skip', 'take']))
+            'left': () => extra.analysis({
+              usedColumn: usedExtraColumn,
+              order: ctx.order,
+            }),
+            'inner': () => extra.analysis({
+              usedColumn: usedExtraColumn,
+              order: ctx.order,
+            }),
+          })
+          if (hasOneOf(baseBody.state(), ['leftJoin', 'innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take'])) {
+            baseBody = baseBody.bracket()
+          }
+          if (hasOneOf(extraBody.state(), ['leftJoin', 'innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take'])) {
+            extraBody = extraBody.bracket()
+          }
+          pickConfig(mode satisfies "inner" | "left" | "lazy", {
+            lazy: () => {
+              extraBody.bracketIf()
+            },
+            left: () => {
 
+            },
+            inner: () => {
+
+            },
+          })
         },
       }
     })
@@ -98,7 +120,16 @@ export class SqlView<VT1 extends SqlViewTemplate> {
   bracketIf = (useWrap: (opts: {
     state: SqlState[],
   }) => boolean): SqlView<VT1> => {
-    throw 'todo'
+    return new SqlView(() => {
+      const buildCtx = this.createBuildCtx()
+      return {
+        ...buildCtx,
+        analysis: (ctx) => {
+          const body = buildCtx.analysis(ctx)
+          return useWrap({ state: body.state() }) ? body.bracket() : body
+        },
+      }
+    })
   }
 
   order = (

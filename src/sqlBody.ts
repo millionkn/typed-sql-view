@@ -2,6 +2,7 @@ import { Resolvable, SqlState, SqlContext, exec, Column } from "./tools.js"
 
 export class SqlBody {
   constructor(public opts: {
+    usedColumn: Column[],
     from: {
       aliasSym: object,
       resolvable: Resolvable,
@@ -23,7 +24,7 @@ export class SqlBody {
     skip: number,
   }) { }
 
-  private state() {
+  state() {
     const base = this.opts
     const stateArr: SqlState[] = []
     if (base.join.some((e) => e.type === 'inner')) { stateArr.push('innerJoin') }
@@ -37,20 +38,28 @@ export class SqlBody {
     return stateArr
   }
 
-  bracketIf(usedColumn: Column[], condation: (opts: { state: SqlState[] }) => boolean) {
-    if (!condation({ state: this.state() })) { return }
-    const aliasSym = {}
-    const mapper = new Map([...new Set(usedColumn)].map((column, index) => {
-      const resolvable = Column.getResolvable(column)
+  bracket() {
+    const usedColumn = [...new Set(this.opts.usedColumn)].map((column, index) => {
+      const inner = Column.getResolvable(column)
       const alias = `value_${index}`
       Column.setResolvable(column, ({ resolveSym }) => `"${resolveSym(aliasSym)}"."${alias}"`);
-      return [resolvable, alias]
-    }))
-    const body = new SqlBody(this.opts)
-    this.opts = {
+      return { column, inner, alias }
+    })
+    const aliasSym = {}
+    return new SqlBody({
+      usedColumn: usedColumn.map((e) => e.column),
       from: {
         aliasSym,
-        resolvable: (ctx) => `(${body.build(mapper, ctx)})`,
+        resolvable: (ctx) => {
+          const cbArr = usedColumn.map((e) => {
+            const current = Column.getResolvable(e.column)
+            Column.setResolvable(e.column, e.inner)
+            return () => Column.setResolvable(e.column, current)
+          })
+          const result = `(${this.build(new Map(usedColumn.map((e) => [e.inner, e.alias])), ctx)})`
+          cbArr.forEach((cb) => cb())
+          return result
+        },
       },
       join: [],
       where: [],
@@ -59,7 +68,7 @@ export class SqlBody {
       order: [],
       take: null,
       skip: 0,
-    }
+    })
   }
 
   build(select: Map<Resolvable, string>, ctx: SqlContext) {
