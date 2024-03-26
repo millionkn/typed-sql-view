@@ -2,7 +2,6 @@ import { Resolvable, SqlState, SqlContext, exec, Column } from "./tools.js"
 
 export class SqlBody {
   constructor(public opts: {
-    usedColumn: Column[],
     from: {
       aliasSym: object,
       resolvable: Resolvable,
@@ -24,7 +23,7 @@ export class SqlBody {
     skip: number,
   }) { }
 
-  state() {
+  private state() {
     const base = this.opts
     const stateArr: SqlState[] = []
     if (base.join.some((e) => e.type === 'inner')) { stateArr.push('innerJoin') }
@@ -38,8 +37,9 @@ export class SqlBody {
     return stateArr
   }
 
-  bracket() {
-    const usedColumn = [...new Set(this.opts.usedColumn)].map((column, index) => {
+  bracketIf(usedColumn: Column[], condation: (opt: { state: SqlState[] }) => boolean) {
+    if (!condation({ state: this.state() })) { return this }
+    const usedColumnInfo = [...new Set(usedColumn)].map((column, index) => {
       const inner = Column.getResolvable(column)
       const alias = `value_${index}`
       Column.setResolvable(column, ({ resolveSym }) => `"${resolveSym(aliasSym)}"."${alias}"`);
@@ -47,16 +47,15 @@ export class SqlBody {
     })
     const aliasSym = {}
     return new SqlBody({
-      usedColumn: usedColumn.map((e) => e.column),
       from: {
         aliasSym,
         resolvable: (ctx) => {
-          const cbArr = usedColumn.map((e) => {
+          const cbArr = usedColumnInfo.map((e) => {
             const current = Column.getResolvable(e.column)
             Column.setResolvable(e.column, e.inner)
             return () => Column.setResolvable(e.column, current)
           })
-          const result = `(${this.build(new Map(usedColumn.map((e) => [e.inner, e.alias])), ctx)})`
+          const result = `(${this.build(new Map(usedColumnInfo.map((e) => [e.inner, e.alias])), ctx)})`
           cbArr.forEach((cb) => cb())
           return result
         },
@@ -94,7 +93,7 @@ export class SqlBody {
     exec(() => {
       if (this.opts.where.length === 0) { return }
       bodyArr.push(`where`)
-      bodyArr.push(this.opts.where.map((segment) => segment({ ...ctx, resolveSym })).join(' and '))
+      bodyArr.push(this.opts.where.map((segment) => segment({ ...ctx, resolveSym })).filter((v) => v.length !== 0).join(' and '))
     })
     exec(() => {
       if (this.opts.groupBy.length === 0) { return }
@@ -104,7 +103,7 @@ export class SqlBody {
     exec(() => {
       if (this.opts.having.length === 0) { return }
       bodyArr.push(`having`)
-      bodyArr.push(this.opts.having.map((segment) => segment({ ...ctx, resolveSym })).join(' and '))
+      bodyArr.push(this.opts.having.map((segment) => segment({ ...ctx, resolveSym })).filter((v) => v.length !== 0).join(' and '))
     })
     exec(() => {
       if (this.opts.order.length === 0) { return }

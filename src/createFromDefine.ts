@@ -9,21 +9,16 @@ export function createFromDefine<VT extends SqlViewTemplate>(
   return new SqlView(() => {
     const info = new Map<Column, { columnExpr: (root: string) => string }>()
     const template = getTemplate((withNull, columnExpr, formatter) => {
-      const column = new Column<any, any>({
-        withNull,
-        format: formatter || (() => { throw new Error() }),
-      })
+      const column = new Column<any, any>()
       info.set(column, { columnExpr })
       return column
     })
     return {
       template,
-      columnArr: [...info.keys()],
       analysis: (ctx) => {
         const sym = {}
         ctx.usedColumn.forEach((column) => Column.setResolvable(column, ({ resolveSym }) => info.get(column)!.columnExpr(resolveSym(sym))))
         return new SqlBody({
-          usedColumn: ctx.usedColumn,
           from: {
             aliasSym: sym,
             resolvable: () => rawFrom,

@@ -1,7 +1,7 @@
 export class Column<N extends boolean = boolean, R = unknown> {
   private resolvable: Resolvable = () => { throw new Error() }
   constructor(
-    opts: {
+    opts?: {
       withNull: N,
       format: (raw: unknown) => R,
     }
@@ -76,4 +76,18 @@ export function hasOneOf<T>(items: T[], arr: (T & {})[]) {
 
 export function pickConfig<K extends string | number, R>(key: K, config: { [key in K]: () => R }): R {
   return config[key]()
+}
+
+function _flatViewTemplate(template: SqlViewTemplate): Column[] {
+  if (template instanceof Column) { return [template] }
+  if (template instanceof Array) { return template.flatMap((e) => _flatViewTemplate(e)) }
+  return Object.values(template).flatMap((e) => _flatViewTemplate(e))
+}
+
+export function flatViewTemplate(template: SqlViewTemplate): Column[] {
+  return [...new Set(_flatViewTemplate(template))]
+}
+
+export function getSegmentTarget<T>(segment: Segment<T>): T[] {
+  return segment.map((e) => typeof e === 'object' && e.value).filter((e): e is T => !!e)
 }
