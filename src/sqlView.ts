@@ -1,6 +1,6 @@
 import { SqlAdapter } from "./adapter.js";
 import { SqlBody } from "./sqlBody.js";
-import { Column, ColumnDeclareFun, GetRefStr, Relation, Segment, SqlState, SqlViewTemplate, flatViewTemplate, getSegmentTarget, hasOneOf, pickConfig, resolveExpr } from "./tools.js";
+import { Column, ColumnDeclareFun, DeepTemplate, GetRefStr, Relation, Segment, SqlState, SqlViewTemplate, flatViewTemplate, getSegmentTarget, hasOneOf, pickConfig, resolveExpr } from "./tools.js";
 
 export class SqlView<VT1 extends SqlViewTemplate> {
   constructor(
@@ -249,10 +249,10 @@ export class SqlView<VT1 extends SqlViewTemplate> {
     })
   }
 
-  select<ST>(
+  buildSelect<ST extends { [key: string]: Column }>(
     adapter: SqlAdapter,
-    template: (createSelect: CreateSelect<VT1>) => ST,
-  ) { 
+    getTemplate: (createSelect: CreateSelect<VT1>) => ST,
+  ) {
 
   }
 };

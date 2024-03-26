@@ -21,12 +21,12 @@ const view = tableDefine
       })
       .pipe((grouped) => {
         return view
-          .join('lazy', true, grouped, (ctx) => `${ctx.baseRef((e) => e.columnA)} = ${ctx.extraRef((e) => e.keys[0])}`)
+          .join('lazy', true, grouped, (ctx) => `${ctx.ref((e) => e.base.columnA)} = ${ctx.ref((e) => e.extra.keys[0])}`)
       })
-
   }).mapTo((e) => {
     return e.extra
   })
+  .buildSelect()
 // const [] = rawSelect({ view, order: true, adapter }, (select) => {
 //   return {
 
