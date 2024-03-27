@@ -9,7 +9,7 @@ export function createFromDefine<VT extends SqlViewTemplate>(
   return new SqlView(() => {
     const info = new Map<Column, { columnExpr: (root: string) => string }>()
     const template = getTemplate((withNull, columnExpr, formatter) => {
-      const column = new Column<any, any>('base')
+      const column = new Column<any, any>()
       info.set(column, { columnExpr })
       return column
     })

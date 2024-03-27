@@ -1,9 +1,6 @@
 export class Column<N extends boolean = boolean, R = unknown> {
-  private resolvable: Resolvable = () => {
-    throw new Error(this.debug)
-  }
+  private resolvable: Resolvable = () => { throw new Error() }
   constructor(
-    private debug: string,
     opts?: {
       withNull: N,
       format: (raw: unknown) => R,
@@ -55,17 +52,18 @@ export const resolveExpr = exec(() => {
   let _nsIndex = 0
   return <T>(getExpr: (holder: (value: T) => string) => string): Segment<T> => {
     const nsIndex = _nsIndex += 1
+    const split = `'"${nsIndex}'"`
     let index = 0
     const saved = new Map<string, { value: T }>()
     const expr = getExpr((value) => {
       const key = `holder_${nsIndex}_${index += 1}`
       saved.set(key, { value })
-      return `'"'"${key}'"'"`
+      return `${split}${key}${split}`
     })
-    const resultArr = expr.split(`'"'"`).map((str, i) => {
+    const resultArr = expr.length === 0 ? [] : expr.split(split).map((str, i) => {
       if (i % 2 === 0) { return str }
       const r = saved.get(str)
-      if (!r) { return `'"'"${str}'"'"` }
+      if (!r) { throw new Error() }
       return r
     })
     _nsIndex -= 1

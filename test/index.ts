@@ -24,6 +24,10 @@ const view = tableDefine
           .join('lazy', true, grouped, (ctx) => `${ctx.ref((e) => e.base.columnA)} = ${ctx.ref((e) => e.extra.keys[0])}`)
       })
   })
+  .pipe((view) => {
+    return view
+      .andWhere(({ ref, selectFrom }) => `exists (${selectFrom(view.andWhere((t) => `${t.ref((e) => e.base.columnA)} = ${ref((e) => e.base.columnA)}`))})`)
+  })
   .mapTo((e) => {
     return e
   })
@@ -33,19 +37,14 @@ const adapter = new SqlAdapter({
   skip: 'offset',
   take: 'limit',
 })
-const result = view.buildSelect(adapter, (e) => {
+console.log(view.buildSelect(adapter, (e) => {
+  return {
+  }
+}).sql)
+
+console.log(view.buildSelect(adapter, (e) => {
   return {
     ...e.base,
-    maxB:e.extra.content.maxB,
+    maxB: e.extra.content.maxB,
   }
-})
-console.log(result)
-// const [] = rawSelect({ view, order: true, adapter }, (select) => {
-//   return {
-
-//   }
-// })
-
-
-
-
+}).sql)
