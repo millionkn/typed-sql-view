@@ -72,8 +72,8 @@ export class SqlView<VT1 extends SqlViewTemplate> {
       const buildCtx = this.createBuildCtx()
       const info = new Map<Column, Segment<Column>>()
       const keysTemplate = getKeyTemplate(buildCtx.template)
-      const contentTemplate = getValueTemplate((withNull, columnExpr, formatter) => {
-        const column = new Column<any, any>()
+      const contentTemplate = getValueTemplate((withNull, columnExpr, format = () => { throw new Error() }) => {
+        const column = new Column<any, any>({ withNull, format })
         const segment = resolveExpr<Column>((holder) => columnExpr((ref) => holder(ref(buildCtx.template))))
         info.set(column, segment)
         Column.setResolvable(column, (ctx) => segmentToStr(segment, (c) => Column.getResolvable(c)(ctx)))
@@ -117,13 +117,15 @@ export class SqlView<VT1 extends SqlViewTemplate> {
           extra: extra.template,
         })),
       }))
+      const extraColumnArr = flatViewTemplate(extra.template)
+      extraColumnArr.forEach((c) => Column.getOpts(c).withNull = withNull)
       return {
         template: {
           base: base.template,
           extra: extra.template as Relation<N, VT2>,
         },
         analysis: (ctx) => {
-          const extraColumnArr = flatViewTemplate(extra.template)
+          
           if (mode === 'lazy' && !ctx.usedColumn.find((e) => extraColumnArr.includes(e))) {
             return base.analysis(ctx)
           }
@@ -182,8 +184,8 @@ export class SqlView<VT1 extends SqlViewTemplate> {
         return flat(getSegmentTarget(segment))
       })
       return {
-        template: getTemplate(buildCtx.template, (withNull, getExpr, formatter) => {
-          const column = new Column<any, any>()
+        template: getTemplate(buildCtx.template, (withNull, getExpr, format = () => { throw new Error() }) => {
+          const column = new Column<any, any>({ withNull, format })
           const segment = resolveExpr<Column>((holder) => getExpr((c) => holder(c)))
           Column.setResolvable(column, (ctx) => segmentToStr(segment, (c) => Column.getResolvable(c)(ctx)))
           info.set(column, segment)

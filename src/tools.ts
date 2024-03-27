@@ -1,18 +1,33 @@
 export class Column<N extends boolean = boolean, R = unknown> {
-  private resolvable: Resolvable = () => { throw new Error() }
+  private share = { resolvable: (() => { throw new Error() }) as Resolvable }
   constructor(
-    opts?: {
+    private opts: {
       withNull: N,
-      format: (raw: unknown) => R,
+      format: (raw: unknown) => R
     }
   ) { }
 
+  readonly withNull = <N extends boolean>(value: N): Column<N extends false ? false : boolean, R> => {
+    const r = new Column({ withNull: value as any, format: this.opts.format })
+    r.share = this.share
+    return r
+  }
+
+  readonly format = <R>(value: (raw: unknown) => R): Column<N, R> => {
+    const r = new Column({ withNull: this.opts.withNull, format: value as () => any })
+    r.share = this.share
+    return r
+  }
+
+  static getOpts(column: Column) {
+    return column.opts
+  }
+
   static setResolvable(column: Column, resolvable: Resolvable) {
-    column.resolvable = resolvable
+    column.share.resolvable = resolvable
   }
   static getResolvable(column: Column) {
-    if (!column.resolvable) { throw new Error() }
-    return column.resolvable
+    return column.share.resolvable
   }
 }
 
