@@ -1,4 +1,4 @@
-import { createFromDefine } from '../src/index.js'
+import { SqlAdapter, createFromDefine } from '../src/index.js'
 import z from 'zod'
 
 const tableDefine = createFromDefine(`"public"."tableName"`, (define) => {
@@ -23,10 +23,23 @@ const view = tableDefine
         return view
           .join('lazy', true, grouped, (ctx) => `${ctx.ref((e) => e.base.columnA)} = ${ctx.ref((e) => e.extra.keys[0])}`)
       })
-  }).mapTo((e) => {
-    return e.extra
   })
-  .buildSelect()
+  .mapTo((e) => {
+    return e
+  })
+
+const adapter = new SqlAdapter({
+  paramHolder: (index) => `$${index + 1}`,
+  skip: 'offset',
+  take: 'limit',
+})
+const result = view.buildSelect(adapter, (e) => {
+  return {
+    ...e.base,
+    maxB:e.extra.content.maxB,
+  }
+})
+console.log(result)
 // const [] = rawSelect({ view, order: true, adapter }, (select) => {
 //   return {
 

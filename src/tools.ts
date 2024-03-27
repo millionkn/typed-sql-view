@@ -1,6 +1,9 @@
 export class Column<N extends boolean = boolean, R = unknown> {
-  private resolvable: Resolvable = () => { throw new Error() }
+  private resolvable: Resolvable = () => {
+    throw new Error(this.debug)
+  }
   constructor(
+    private debug: string,
     opts?: {
       withNull: N,
       format: (raw: unknown) => R,
@@ -90,4 +93,8 @@ export function flatViewTemplate(template: SqlViewTemplate): Column[] {
 
 export function getSegmentTarget<T>(segment: Segment<T>): T[] {
   return segment.map((e) => typeof e === 'object' && e.value).filter((e): e is T => !!e)
+}
+
+export function segmentToStr<T>(segment: Segment<T>, toStr: (value: T) => string) {
+  return segment.map((e) => typeof e === 'string' ? e : toStr(e.value)).join('')
 }

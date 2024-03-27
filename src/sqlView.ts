@@ -1,6 +1,6 @@
 import { SqlAdapter } from "./adapter.js";
 import { SqlBody } from "./sqlBody.js";
-import { Column, ColumnDeclareFun, DeepTemplate, GetRefStr, Relation, Segment, SqlState, SqlViewTemplate, flatViewTemplate, getSegmentTarget, hasOneOf, pickConfig, resolveExpr } from "./tools.js";
+import { Column, ColumnDeclareFun, DeepTemplate, GetRefStr, Relation, Segment, SqlState, SqlViewTemplate, flatViewTemplate, getSegmentTarget, hasOneOf, pickConfig, resolveExpr, segmentToStr } from "./tools.js";
 
 export class SqlView<VT1 extends SqlViewTemplate> {
   constructor(
@@ -50,17 +50,19 @@ export class SqlView<VT1 extends SqlViewTemplate> {
   ): SqlView<{ keys: K, content: VT }> => {
     return new SqlView(() => {
       const buildCtx = this.createBuildCtx()
-      const info = new Map<Column, { segment: Segment<Column> }>()
+      const info = new Map<Column, Segment<Column>>()
       const keysTemplate = getKeyTemplate(buildCtx.template)
       const contentTemplate = getValueTemplate((withNull, columnExpr, formatter) => {
-        const column = new Column<any, any>()
-        info.set(column, { segment: resolveExpr((holder) => columnExpr((ref) => holder(ref(buildCtx.template)))) })
+        const column = new Column<any, any>('innerValue')
+        const segment = resolveExpr<Column>((holder) => columnExpr((ref) => holder(ref(buildCtx.template))))
+        info.set(column, segment)
+        Column.setResolvable(column, (ctx) => segmentToStr(segment, (c) => Column.getResolvable(c)(ctx)))
         return column
       })
       return {
         template: { keys: keysTemplate, content: contentTemplate },
         analysis: (ctx) => {
-          const usedContentColumn = ctx.usedColumn.flatMap((c) => getSegmentTarget(info.get(c)?.segment || []))
+          const usedContentColumn = ctx.usedColumn.flatMap((c) => getSegmentTarget(info.get(c) || []))
           const keysColumn = flatViewTemplate(keysTemplate)
           const usedColumn = [...new Set(keysColumn.concat(usedContentColumn))]
           const body = buildCtx.analysis({
@@ -68,7 +70,7 @@ export class SqlView<VT1 extends SqlViewTemplate> {
             usedColumn: usedColumn,
           }).bracketIf(usedColumn, ({ state }) => hasOneOf(state, ['groupBy', 'having', 'skip', 'take']))
           body.opts.groupBy = keysColumn.map((column) => (ctx) => Column.getResolvable(column)(ctx))
-          usedContentColumn.forEach((c) => Column.setResolvable(c, (ctx) => info.get(c)!.segment.map((e) => typeof e === 'string' ? e : Column.getResolvable(e.value)(ctx)).join('')))
+          //usedContentColumn.forEach((c) => Column.setResolvable(c, (ctx) => segmentToStr(info.get(c)!, (c) => Column.getResolvable(c)(ctx))))
           return body
         },
       }
@@ -135,7 +137,7 @@ export class SqlView<VT1 extends SqlViewTemplate> {
                 type: mode === 'inner' ? 'inner' : 'left',
                 aliasSym: extraBody.opts.from.aliasSym,
                 resolvable: extraBody.opts.from.resolvable,
-                condation: (ctx) => condation.map((e) => typeof e === 'string' ? e : Column.getResolvable(e.value)(ctx)).join(''),
+                condation: (ctx) => segmentToStr(condation, (c) => Column.getResolvable(c)(ctx)),
               },
               ...extraBody.opts.join ?? [],
             ],
@@ -162,8 +164,10 @@ export class SqlView<VT1 extends SqlViewTemplate> {
       })
       return {
         template: getTemplate(buildCtx.template, (withNull, getExpr, formatter) => {
-          const column = new Column<any, any>()
-          info.set(column, resolveExpr((holder) => getExpr((c) => holder(c))))
+          const column = new Column<any, any>('mapTo')
+          const segment = resolveExpr<Column>((holder) => getExpr((c) => holder(c)))
+          Column.setResolvable(column, (ctx) => segmentToStr(segment, (c) => Column.getResolvable(c)(ctx)))
+          info.set(column, segment)
           return column
         }),
         analysis: (ctx) => buildCtx.analysis({
@@ -204,7 +208,7 @@ export class SqlView<VT1 extends SqlViewTemplate> {
           }).bracketIf(usedColumn, ({ state }) => hasOneOf(state, ['skip', 'take']))
           sqlBody.opts.order.unshift({
             order,
-            resolvable: (ctx) => segment.map((e) => typeof e === 'string' ? e : Column.getResolvable(e.value)(ctx)).join(''),
+            resolvable: (ctx) => segmentToStr(segment, (c) => Column.getResolvable(c)(ctx)),
           })
           return sqlBody
         },
@@ -251,8 +255,38 @@ export class SqlView<VT1 extends SqlViewTemplate> {
 
   buildSelect<ST extends { [key: string]: Column }>(
     adapter: SqlAdapter,
-    getTemplate: (createSelect: CreateSelect<VT1>) => ST,
+    getTemplate: (template: VT1) => ST,
   ) {
+    const buildCtx = this.createBuildCtx()
+    const selectTemplate = getTemplate(buildCtx.template)
+    const usedColumn = [...new Set(Object.values(selectTemplate))]
+    const sqlBody = buildCtx.analysis({
+      order: true,
+      usedColumn,
+    })
+    let tableAliasIndex = 0
+    let paramIndex = 0
+    const params: unknown[] = []
+    const sql = sqlBody.build(new Map(usedColumn.map((c, i) => [Column.getResolvable(c), `value_${i}`])), {
+      sym: {
+        skip: adapter.opts.skip,
+        take: adapter.opts.take,
+      },
+      resolveSym: () => { throw new Error() },
+      genTableAlias: () => `table_${tableAliasIndex++}`,
+      setParam: (value) => {
+        const holder = adapter.opts.paramHolder(paramIndex++)
+        params.push(value)
+        return holder
+      },
+    })
 
+    return {
+      sql,
+      params,
+      rawFormatter: (raw: { [key: string]: unknown }) => {
+        return Object.fromEntries(Object.entries(selectTemplate).map(([key, column]) => [key, raw[`value_${usedColumn.findIndex((c) => c === column)}`]]))
+      }
+    }
   }
 };
