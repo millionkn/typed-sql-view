@@ -26,7 +26,7 @@ const view = tableDefine
   })
   .pipe((view) => {
     return view
-      .andWhere(({ ref, selectFrom }) => `exists (${selectFrom(view.andWhere((t) => `${t.ref((e) => e.base.columnA)} = ${ref((e) => e.base.columnA)}`))})`)
+      .andWhere(({ ref, select1From: selectFrom }) => `exists (${selectFrom(view.andWhere((t) => `${t.ref((e) => e.base.columnA)} = ${ref((e) => e.base.columnA)}`))})`)
   })
   .mapTo((e) => {
     return e
@@ -40,11 +40,13 @@ const adapter = new SqlAdapter({
 console.log(view.buildSelect(adapter, (e) => {
   return {
   }
-}).sql)
+}))
 
 console.log(view.buildSelect(adapter, (e) => {
   return {
     ...e.base,
+    columnC: e.base.columnC.format((raw) => z.string().parse(raw)),
+    columnD: e.base.columnD.withNull(true).format((raw) => z.string().parse(raw)),
     maxB: e.extra.content.maxB,
   }
-}).sql)
+}))

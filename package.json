@@ -5,8 +5,8 @@
   "type": "module",
   "module": "./dist/index.js",
   "scripts": {
-    "start": "set TS_NODE_PROJECT=./tsconfig.test.json&& node --loader ts-node/esm ./test/index.ts",
-    "start:debug": "set TS_NODE_PROJECT=./tsconfig.test.json&& node --loader ts-node/esm --inspect ./test/index.ts",
+    "start": "cross-env TS_NODE_PROJECT=./tsconfig.test.json node --watch --loader ts-node/esm ./test/index.ts",
+    "start:debug": "cross-env TS_NODE_PROJECT=./tsconfig.test.json node --watch --loader ts-node/esm --inspect ./test/index.ts",
     "build": "tsc"
   },
   "keywords": [],
@@ -14,6 +14,7 @@
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^20.11.27",
+    "cross-env": "^7.0.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.2",
     "zod": "^3.22.4"

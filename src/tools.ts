@@ -1,33 +1,36 @@
-export class Column<N extends boolean = boolean, R = unknown> {
-  private share = { resolvable: (() => { throw new Error() }) as Resolvable }
+
+
+export class InnerColumn {
   constructor(
-    private opts: {
-      withNull: N,
-      format: (raw: unknown) => R
-    }
+    public resolvable: Resolvable
   ) { }
+}
+
+export class Column<N extends boolean = boolean, R = unknown> {
+  constructor(private opts: {
+    inner: InnerColumn,
+    withNull: N,
+    format: (raw: unknown) => R,
+  }) { }
 
   readonly withNull = <N extends boolean>(value: N): Column<N extends false ? false : boolean, R> => {
-    const r = new Column({ withNull: value as any, format: this.opts.format })
-    r.share = this.share
-    return r
+    return new Column({
+      withNull: value as any,
+      format: this.opts.format,
+      inner: this.opts.inner,
+    })
   }
 
   readonly format = <R>(value: (raw: unknown) => R): Column<N, R> => {
-    const r = new Column({ withNull: this.opts.withNull, format: value as () => any })
-    r.share = this.share
-    return r
+    return new Column({
+      inner: this.opts.inner,
+      withNull: this.opts.withNull,
+      format: value as () => any,
+    })
   }
 
   static getOpts(column: Column) {
     return column.opts
-  }
-
-  static setResolvable(column: Column, resolvable: Resolvable) {
-    column.share.resolvable = resolvable
-  }
-  static getResolvable(column: Column) {
-    return column.share.resolvable
   }
 }
 
@@ -46,7 +49,7 @@ type _Relation<VT extends readonly SqlViewTemplate[] | { readonly [key: string]:
 }
 
 export type Relation<N extends boolean, VT extends SqlViewTemplate> = N extends false ? VT
-  : VT extends Column<boolean, infer X> ? Column<true, X>
+  : VT extends Column<boolean, infer X> ? Column<boolean, X>
   : _Relation<Extract<VT, readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }>>
 
 export type Segment<T = unknown> = Array<string | { value: T }>

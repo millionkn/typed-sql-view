@@ -1,23 +1,23 @@
 import { SqlBody } from "./sqlBody.js";
 import { SqlView } from "./sqlView.js";
-import { Column, ColumnDeclareFun, SqlViewTemplate } from "./tools.js";
+import { Column, ColumnDeclareFun, InnerColumn, SqlViewTemplate } from "./tools.js";
 
 export function createFromDefine<VT extends SqlViewTemplate>(
   rawFrom: string,
   getTemplate: (define: ColumnDeclareFun<string>) => VT
 ) {
   return new SqlView(() => {
-    const info = new Map<Column, { columnExpr: (root: string) => string }>()
-    const template = getTemplate((withNull, columnExpr, format = () => { throw new Error() }) => {
-      const column = new Column<any, any>({ withNull, format })
-      info.set(column, { columnExpr })
-      return column
+    const sym = {}
+    const template = getTemplate((withNull, columnExpr, format) => {
+      return new Column<any, any>({
+        withNull,
+        format: format || (() => { throw new Error() }),
+        inner: new InnerColumn((ctx) => columnExpr(ctx.resolveSym(sym))),
+      })
     })
     return {
       template,
       analysis: (ctx) => {
-        const sym = {}
-        ctx.usedColumn.forEach((column) => Column.setResolvable(column, ({ resolveSym }) => info.get(column)!.columnExpr(resolveSym(sym))))
         return new SqlBody({
           from: {
             aliasSym: sym,

@@ -1,6 +1,6 @@
 import { SqlAdapter } from "./adapter.js";
 import { SqlBody } from "./sqlBody.js";
-import { Column, ColumnDeclareFun, GetRefStr, Relation, Resolvable, Segment, SqlState, SqlViewTemplate, exec, flatViewTemplate, getSegmentTarget, hasOneOf, pickConfig, resolveExpr, segmentToStr } from "./tools.js";
+import { Column, ColumnDeclareFun, GetRefStr, InnerColumn, Relation, Resolvable, Segment, SqlState, SqlViewTemplate, exec, flatViewTemplate, getSegmentTarget, hasOneOf, pickConfig, resolveExpr, segmentToStr } from "./tools.js";
 
 export class SqlView<VT1 extends SqlViewTemplate> {
   constructor(
@@ -20,14 +20,14 @@ export class SqlView<VT1 extends SqlViewTemplate> {
   andWhere = (getExpr: (tools: {
     ref: GetRefStr<VT1>,
     param: (value: any) => string,
-    selectFrom: (view: SqlView<SqlViewTemplate>) => string,
+    select1From: (view: SqlView<SqlViewTemplate>) => string,
   }) => null | false | undefined | string): SqlView<VT1> => {
     return new SqlView(() => {
       const buildCtx = this.createBuildCtx()
       const segment = resolveExpr<Resolvable | Column>((holder) => getExpr({
         ref: (ref) => holder(ref(buildCtx.template)),
         param: (value) => holder((ctx) => ctx.setParam(value)),
-        selectFrom: (view) => view
+        select1From: (view) => view
           .createBuildCtx()
           .analysis({ order: false, usedColumn: [] })
           .build(new Map([[() => `1`, '1']]), {
@@ -55,7 +55,7 @@ export class SqlView<VT1 extends SqlViewTemplate> {
             usedColumn: ctx.usedColumn.concat(getSegmentTarget(segment).filter((e): e is Column => e instanceof Column))
           }).bracketIf(ctx.usedColumn, ({ state }) => hasOneOf(state, ['skip', 'take']))
           const target = body.opts.groupBy.length === 0 ? body.opts.where : body.opts.having
-          target.push((ctx) => segmentToStr(segment, (e) => e instanceof Column ? Column.getResolvable(e)(ctx) : e(ctx)))
+          target.push((ctx) => segmentToStr(segment, (e) => e instanceof Column ? Column.getOpts(e).inner.resolvable(ctx) : e(ctx)))
           return body
         },
       }
@@ -70,26 +70,29 @@ export class SqlView<VT1 extends SqlViewTemplate> {
   ): SqlView<{ keys: K, content: VT }> => {
     return new SqlView(() => {
       const buildCtx = this.createBuildCtx()
-      const info = new Map<Column, Segment<Column>>()
+      const info = new Map<InnerColumn, Segment<Column>>()
       const keysTemplate = getKeyTemplate(buildCtx.template)
-      const contentTemplate = getValueTemplate((withNull, columnExpr, format = () => { throw new Error() }) => {
-        const column = new Column<any, any>({ withNull, format })
+      const contentTemplate = getValueTemplate((withNull, columnExpr, format) => {
         const segment = resolveExpr<Column>((holder) => columnExpr((ref) => holder(ref(buildCtx.template))))
-        info.set(column, segment)
-        Column.setResolvable(column, (ctx) => segmentToStr(segment, (c) => Column.getResolvable(c)(ctx)))
-        return column
+        const inner = new InnerColumn((ctx) => segmentToStr(segment, (c) => Column.getOpts(c).inner.resolvable(ctx)))
+        info.set(inner, segment)
+        return new Column<any, any>({
+          withNull,
+          format: format || (() => { throw new Error() }),
+          inner,
+        })
       })
       return {
         template: { keys: keysTemplate, content: contentTemplate },
         analysis: (ctx) => {
-          const usedContentColumn = ctx.usedColumn.flatMap((c) => getSegmentTarget(info.get(c) || []))
+          const usedContentColumn = ctx.usedColumn.flatMap((c) => getSegmentTarget(info.get(Column.getOpts(c).inner) || []))
           const keysColumn = flatViewTemplate(keysTemplate)
           const usedColumn = [...new Set(keysColumn.concat(usedContentColumn))]
           const body = buildCtx.analysis({
             order: ctx.order,
             usedColumn: usedColumn,
           }).bracketIf(usedColumn, ({ state }) => hasOneOf(state, ['groupBy', 'having', 'skip', 'take']))
-          body.opts.groupBy = keysColumn.map((column) => (ctx) => Column.getResolvable(column)(ctx))
+          body.opts.groupBy = keysColumn.map((c) => (ctx) => Column.getOpts(c).inner.resolvable(ctx))
           return body
         },
       }
@@ -118,14 +121,13 @@ export class SqlView<VT1 extends SqlViewTemplate> {
         })),
       }))
       const extraColumnArr = flatViewTemplate(extra.template)
-      extraColumnArr.forEach((c) => Column.getOpts(c).withNull = withNull)
+      extraColumnArr.forEach((c) => Column.getOpts(c).withNull ||= withNull)
       return {
         template: {
           base: base.template,
           extra: extra.template as Relation<N, VT2>,
         },
         analysis: (ctx) => {
-          
           if (mode === 'lazy' && !ctx.usedColumn.find((e) => extraColumnArr.includes(e))) {
             return base.analysis(ctx)
           }
@@ -158,7 +160,7 @@ export class SqlView<VT1 extends SqlViewTemplate> {
                 type: mode === 'inner' ? 'inner' : 'left',
                 aliasSym: extraBody.opts.from.aliasSym,
                 resolvable: extraBody.opts.from.resolvable,
-                condation: (ctx) => segmentToStr(condation, (c) => Column.getResolvable(c)(ctx)),
+                condation: (ctx) => segmentToStr(condation, (c) => Column.getOpts(c).inner.resolvable(ctx)),
               },
               ...extraBody.opts.join ?? [],
             ],
@@ -177,19 +179,22 @@ export class SqlView<VT1 extends SqlViewTemplate> {
   mapTo = <VT extends SqlViewTemplate>(getTemplate: (e: VT1, define: ColumnDeclareFun<(c: Column) => string>) => VT): SqlView<VT> => {
     return new SqlView(() => {
       const buildCtx = this.createBuildCtx()
-      const info = new Map<Column, Segment<Column>>()
+      const info = new Map<InnerColumn, Segment<Column>>()
       const flat = (columnArr: Column[]): Column[] => columnArr.flatMap((c) => {
-        const segment = info.get(c)
+        const segment = info.get(Column.getOpts(c).inner)
         if (!segment) { return [c] }
         return flat(getSegmentTarget(segment))
       })
       return {
-        template: getTemplate(buildCtx.template, (withNull, getExpr, format = () => { throw new Error() }) => {
-          const column = new Column<any, any>({ withNull, format })
+        template: getTemplate(buildCtx.template, (withNull, getExpr, format) => {
           const segment = resolveExpr<Column>((holder) => getExpr((c) => holder(c)))
-          Column.setResolvable(column, (ctx) => segmentToStr(segment, (c) => Column.getResolvable(c)(ctx)))
-          info.set(column, segment)
-          return column
+          const inner = new InnerColumn((ctx) => segmentToStr(segment, (c) => Column.getOpts(c).inner.resolvable(ctx)))
+          info.set(inner, segment)
+          return new Column<any, any>({
+            withNull,
+            format: format || (() => { throw new Error() }),
+            inner,
+          })
         }),
         analysis: (ctx) => buildCtx.analysis({
           order: ctx.order,
@@ -229,7 +234,7 @@ export class SqlView<VT1 extends SqlViewTemplate> {
           }).bracketIf(usedColumn, ({ state }) => hasOneOf(state, ['skip', 'take']))
           sqlBody.opts.order.unshift({
             order,
-            resolvable: (ctx) => segmentToStr(segment, (c) => Column.getResolvable(c)(ctx)),
+            resolvable: (ctx) => segmentToStr(segment, (c) => Column.getOpts(c).inner.resolvable(ctx)),
           })
           return sqlBody
         },
@@ -274,7 +279,7 @@ export class SqlView<VT1 extends SqlViewTemplate> {
     })
   }
 
-  buildSelect<ST extends { [key: string]: Column }>(
+  buildSelect<ST extends { [key: string]: Column<boolean, {}> }>(
     adapter: SqlAdapter,
     getTemplate: (template: VT1) => ST,
   ) {
@@ -288,7 +293,7 @@ export class SqlView<VT1 extends SqlViewTemplate> {
     let tableAliasIndex = 0
     let paramIndex = 0
     const params: unknown[] = []
-    const sql = sqlBody.build(new Map(usedColumn.map((c, i) => [Column.getResolvable(c), `value_${i}`])), {
+    const sql = sqlBody.build(new Map(usedColumn.map((c, i) => [Column.getOpts(c).inner.resolvable, `value_${i}`])), {
       sym: {
         skip: adapter.opts.skip,
         take: adapter.opts.take,
