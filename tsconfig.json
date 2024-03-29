@@ -22,4 +22,9 @@
   "include": [
     "./src/*.ts",
   ],
+  "references": [
+    {
+      "path": "./tsconfig.test.json",
+    }
+  ],
 }

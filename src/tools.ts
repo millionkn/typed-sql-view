@@ -7,50 +7,50 @@ export class InnerColumn {
 }
 
 export class Column<N extends boolean = boolean, R = unknown> {
-  constructor(private opts: {
-    inner: InnerColumn,
-    withNull: N,
-    format: (raw: unknown) => R,
-  }) { }
+  private _withNull = true
+  private _format = (raw: unknown): R => { throw new Error() }
+  constructor(private inner: InnerColumn) { }
 
-  readonly withNull = <N extends boolean>(value: N): Column<N extends false ? false : boolean, R> => {
-    return new Column({
-      withNull: value as any,
-      format: this.opts.format,
-      inner: this.opts.inner,
-    })
+  readonly withNull = <const N extends boolean>(value: N): Column<N, R> => {
+    const r = new Column<N, R>(this.inner)
+    r._withNull = value
+    r._format = r._format
+    return r
   }
 
   readonly format = <R>(value: (raw: unknown) => R): Column<N, R> => {
-    return new Column({
-      inner: this.opts.inner,
-      withNull: this.opts.withNull,
-      format: value as () => any,
-    })
+    const r = new Column<N, R>(this.inner)
+    r._withNull = r._withNull
+    r._format = value
+    return r
   }
 
   static getOpts(column: Column) {
-    return column.opts
+    return {
+      inner: column.inner,
+      format: column._format,
+      withNull: column._withNull,
+    }
   }
 }
 
 export type DeepTemplate<I> = I | (readonly DeepTemplate<I>[]) | { readonly [key: string]: DeepTemplate<I> }
 export type SqlViewTemplate = DeepTemplate<Column>
 
-export type ColumnDeclareFun<I> = <N extends boolean, R = unknown>(withNull: N, columnExpr: (input: I) => string, formatter?: (notNull: unknown) => R) => Column<N extends false ? false : boolean, R>
+export type ColumnDeclareFun<I> = (columnExpr: (input: I) => string) => Column<boolean, unknown>
 
 export type GetRefStr<VT extends SqlViewTemplate> = (ref: (template: VT) => Column) => string
 
-type _Relation<VT extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }> = {
+type _Relation<N extends boolean, VT extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }> = {
   [key in keyof VT]
-  : VT[key] extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate } ? _Relation<VT[key]>
-  : VT[key] extends Column<boolean, infer X> ? Column<boolean, X>
+  : VT[key] extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate } ? _Relation<N, VT[key]>
+  : VT[key] extends Column<infer N2, infer X> ? Column<(N2 & N) extends true ? true : boolean, X>
   : never
 }
 
 export type Relation<N extends boolean, VT extends SqlViewTemplate> = N extends false ? VT
-  : VT extends Column<boolean, infer X> ? Column<boolean, X>
-  : _Relation<Extract<VT, readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }>>
+  : VT extends Column<infer N2, infer X> ? Column<(N2 & N) extends true ? true : boolean, X>
+  : _Relation<N, Extract<VT, readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }>>
 
 export type Segment<T = unknown> = Array<string | { value: T }>
 export type SqlState = 'leftJoin' | 'innerJoin' | 'where' | 'groupBy' | 'having' | 'take' | 'skip' | 'order'
@@ -60,8 +60,8 @@ export type SqlContext = {
   genTableAlias: () => string,
   setParam: (value: any) => string,
   sym: {
-    skip: 'skip' | 'offset',
-    take: 'take' | 'limit',
+    skip: string,
+    take: string,
   }
 }
 export const exec = <T>(fun: () => T): T => fun()
