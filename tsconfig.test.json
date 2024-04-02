@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "es2016",
+    "target": "ESNext",
     "module": "Node16",
     "moduleResolution":"Node16",
     "esModuleInterop": true,
@@ -20,7 +20,7 @@
     ]
   },
   "include": [
-    "./test/*.ts",
+    "scripts/*.ts",
   ],
   "references": [
     {

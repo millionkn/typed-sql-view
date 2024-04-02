@@ -1,6 +1,6 @@
 export type { SqlView } from './sqlView.js'
 export { createFromDefine } from './createFromDefine.js'
 export { RawSqlCreator } from './rawSqlCreator.js'
-export { Column } from './tools.js'
+export type { Column } from './tools.js'
 export type { ColumnDeclareFun, SqlViewTemplate, GetRefStr } from './tools.js'
 export { SqlExecutor } from './sqlExecutor.js'

@@ -1,5 +1,5 @@
 import { SqlView } from "./sqlView.js"
-import { Column, GetRefStr, SqlViewTemplate, hasOneOf } from "./tools.js"
+import { Column, GetRefStr, InnerColumn, SqlViewTemplate, hasOneOf } from "./tools.js"
 
 export class RawSqlCreator {
   constructor(
@@ -13,15 +13,22 @@ export class RawSqlCreator {
   selectAll<VT extends { [key: string]: Column<boolean, {}> }>(view: SqlView<VT>) {
     const buildCtx = SqlView.createBuildCtx(view)
     const selectTemplate = buildCtx.template
-    const usedColumn = [...new Set(Object.values(selectTemplate))]
+    const mapper2 = new Map<InnerColumn, string>()
+    const formatCbArr = new Array<(raw: { [key: string]: unknown }) => [string, any]>()
+    Object.entries(selectTemplate).forEach(([key, column]) => {
+      const alias = `value_${mapper2.size}`
+      const { withNull, inner, format } = Column.getOpts(column)
+      mapper2.set(inner, alias)
+      formatCbArr.push((raw) => [key, withNull && raw[alias] === null ? null : format(raw[alias])])
+    })
     const sqlBody = buildCtx.analysis({
       order: true,
-      usedColumn,
+      usedColumn: [...mapper2.keys()],
     })
     let tableAliasIndex = 0
     let paramIndex = 0
     const params: unknown[] = []
-    const sql = sqlBody.build(new Map(usedColumn.map((c, i) => [Column.getOpts(c).inner.resolvable, `value_${i}`])), {
+    const sql = sqlBody.build(new Map([...mapper2].map(([inner, alias]) => [inner.resolvable, alias])), {
       sym: {
         skip: this.opts.skip,
         take: this.opts.take,
@@ -41,15 +48,7 @@ export class RawSqlCreator {
       rawFormatter: (raw: { [key: string]: unknown }): {
         [key in keyof VT]: VT[key] extends Column<infer N, infer R> ? ((N extends false ? never : null) | R) : never
       } => {
-        return Object.fromEntries(Object.entries(selectTemplate).map(([key, column]) => {
-          const opts = Column.getOpts(column)
-          const index = usedColumn.findIndex((c) => c === column)
-          if (opts.withNull) {
-            return [key, raw[`value_${index}`] === null ? null : opts.format(raw[`value_${index}`])]
-          } else {
-            return [key, opts.format(raw[`value_${index}`])]
-          }
-        })) as any
+        return Object.fromEntries(formatCbArr.map((format) => format(raw))) as any
       }
     }
   }

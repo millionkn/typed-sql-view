@@ -1,4 +1,4 @@
-import { Resolvable, SqlState, SqlContext, exec, Column } from "./tools.js"
+import { Resolvable, SqlState, SqlContext, exec, Column, InnerColumn } from "./tools.js"
 
 export class SqlBody {
   constructor(public opts: {
@@ -37,23 +37,22 @@ export class SqlBody {
     return stateArr
   }
 
-  bracketIf(usedColumn: Column[], condation: (opt: { state: SqlState[] }) => boolean) {
+  bracketIf(usedColumn: InnerColumn[], condation: (opt: { state: SqlState[] }) => boolean) {
     if (!condation({ state: this.state() })) { return this }
-    const usedColumnInfo = [...new Set(usedColumn)].map((column, index) => {
-      const temp = Column.getOpts(column).inner.resolvable
+    const usedColumnInfo = [...new Set(usedColumn)].map((inner, index) => {
+      const temp = inner.resolvable
       const alias = `value_${index}`
-      Column.getOpts(column).inner.resolvable = (ctx) => `"${ctx.resolveSym(aliasSym)}"."${alias}"`
-      return { column, temp, alias }
+      inner.resolvable = (ctx) => `"${ctx.resolveSym(aliasSym)}"."${alias}"`
+      return { inner, temp, alias }
     })
     const aliasSym = {}
     return new SqlBody({
       from: {
         aliasSym,
         resolvable: (ctx) => {
-          const cbArr = usedColumnInfo.map((e) => {
-            const inner = Column.getOpts(e.column).inner
+          const cbArr = usedColumnInfo.map(({ inner, temp }) => {
             const current = inner.resolvable
-            inner.resolvable = e.temp
+            inner.resolvable = temp
             return () => inner.resolvable = current
           })
           const result = `(${this.build(new Map(usedColumnInfo.map((e) => [e.temp, e.alias])), ctx)})`

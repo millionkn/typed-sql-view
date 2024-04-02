@@ -5,9 +5,10 @@
   "type": "module",
   "module": "./dist/index.js",
   "scripts": {
-    "start": "cross-env TS_NODE_PROJECT=./tsconfig.test.json node --watch --loader ts-node/esm ./test/index.ts",
-    "start:debug": "cross-env TS_NODE_PROJECT=./tsconfig.test.json node --watch --loader ts-node/esm --inspect ./test/index.ts",
-    "build": "tsc"
+    "prepublish": "pnpm run build",
+    "build": "tsc",
+    "start": "cross-env TS_NODE_PROJECT=./tsconfig.test.json node --watch --loader ts-node/esm ./scripts/test.ts",
+    "start:debug": "cross-env TS_NODE_PROJECT=./tsconfig.test.json node --watch --loader ts-node/esm --inspect ./scripts/test.ts"
   },
   "keywords": [],
   "author": "",
@@ -15,10 +16,15 @@
   "devDependencies": {
     "@types/node": "^20.11.27",
     "cross-env": "^7.0.3",
+    "execa": "^8.0.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.2",
     "zod": "^3.22.4"
   },
+  "files": [
+    "./dist",
+    "./tsconfig.json"
+  ],
   "exports": {
     ".": {
       "import": "./dist/index.js",

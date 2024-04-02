@@ -39,21 +39,25 @@ const view = personTableDefine
       })
       //这里由于groupBy了,所以会使用'having'而不是'where'
       .andWhere(({ ref, param }) => `${ref((e) => e.content.minScore)} > ${param(0)}`)
-  })
-  .mapTo((e) => {
-    return {
-      companyType: e.keys,
-      //不是Proxy所以可以结构
-      ...e.content,
-    }
+      //根据过滤条件，确定结果不会为null
+      .mapTo((e) => {
+        return {
+          companyType: e.keys,
+          ...e.content,
+          minScore: e.content.minScore.withNull(false),
+        }
+      })
   })
   .pipe((aggrateView) => {
     return companyTableDefine
+      // 由于声明了join的withNull为true
+      // 所以minScore的withNull变回true,
+      // maxScore的withNull会由boolean变为true,但查询结果的推断类型相同
       .join('lazy', true, aggrateView, ({ ref }) => `${ref((e) => e.base.companyType)} = ${ref((e) => e.extra.companyType)}`)
   })
 
 //适配postgres
-const builder = new RawSqlCreator({
+const creator = new RawSqlCreator({
   paramHolder: (index) => `$${index + 1}`,
   skip: 'offset',
   take: 'limit',
@@ -61,25 +65,25 @@ const builder = new RawSqlCreator({
 
 
 /** 
- {
+{
   sql: 'select "table_0"."column_a" as "value_0","table_0"."column_b" as "value_1","table_0"."column_c" as "value_2" from "public"."tableName1" as "table_0"',
   params: [],
   rawFormatter: [Function: rawFormatter]
 }
- */
-// console.log(builder.selectAll(view.mapTo((e) => ({
-//   ...e.base
-// }))))
+*/
+console.log(creator.selectAll(view.mapTo((e) => ({
+  ...e.base
+}))))
 
 
 /**
- {
+{
   sql: 'select "table_0"."column_c" as "value_0","table_0"."column_b" as "value_1","table_1"."value_0" as "value_2" from "public"."tableName1" as "table_0" left join (select max("table_2"."column_c") as "value_0","table_3"."column_b" as "value_1" from "public"."tableName2" as "table_2" left join "public"."tableName1" as "table_3" on "table_2"."column_a" = "table_3"."column_a" group by "table_3"."column_b" having min("table_2"."column_c") > $1) as "table_1" on "table_0"."column_b" = "table_1"."value_1"',
   params: [ 0 ],
   rawFormatter: [Function: rawFormatter]
 }
  */
-console.log(builder.selectAll(view.mapTo((e) => ({
+console.log(creator.selectAll(view.mapTo((e) => ({
   companyName: e.base.name,
   companyType: e.base.companyType,
   maxScore: e.extra.maxScore.format((v) => Number(v)),
@@ -87,35 +91,52 @@ console.log(builder.selectAll(view.mapTo((e) => ({
 }))))
 
 
-// const executor = new SqlExecutor(
-//   //适配mysql
-//   new RawSqlCreator({
-//     paramHolder: (index) => `:param${index}`,
-//     skip: 'skip',
-//     take: 'take',
-//   }), (sql, params) => {
-//     throw new Error('使用其他工具进行query')
-//   })
+const executor = new SqlExecutor(
+  //适配mysql
+  new RawSqlCreator({
+    paramHolder: (index) => `:param${index}`,
+    skip: 'skip',
+    take: 'take',
+  }), async (sql, params) => {
+    console.log({ sql, params })
 
-// executor.selectAll(view.mapTo((e) => ({
-//   ...e.base
-// }))).then((arr) => {
-//   type Arr = {
-//     readonly companyId: string;
-//     readonly companyType: string;
-//     readonly name: string;
-//   }[]
-// })
+    // 使用其他工具进行query
+    // ...
+    return []
+  })
 
-// executor.selectAll(view.mapTo((e) => ({
-//   companyName: e.base.name,
-//   companyType: e.base.companyType,
-//   maxScore: e.extra.maxScore.format((v) => Number(v)),
-//   // minScore:e.extra.minScore,
-// }))).then((arr) => {
-//   type Arr = {
-//     readonly companyName: string;
-//     readonly companyType: string;
-//     readonly maxScore: number | null;
-//   }[]
-// })
+
+/**
+{
+  sql: 'select "table_0"."column_a" as "value_0","table_0"."column_b" as "value_1","table_0"."column_c" as "value_2" from "public"."tableName1" as "table_0"',
+  params: []
+}
+*/
+executor.selectAll(view.mapTo((e) => ({
+  ...e.base
+}))).then((arr) => {
+  type Arr = {
+    readonly companyId: string;
+    readonly companyType: string;
+    readonly name: string;
+  }[]
+})
+
+/**
+{
+  sql: 'select "table_0"."column_c" as "value_0","table_0"."column_b" as "value_1","table_1"."value_0" as "value_2" from "public"."tableName1" as "table_0" left join (select max("table_2"."column_c") as "value_0","table_3"."column_b" as "value_1" from "public"."tableName2" as "table_2" left join "public"."tableName1" as "table_3" on "table_2"."column_a" = "table_3"."column_a" group by "table_3"."column_b" having min("table_2"."column_c") > :param0) as "table_1" on "table_0"."column_b" = "table_1"."value_1"',
+  params: [ 0 ]
+}
+*/
+executor.selectAll(view.mapTo((e) => ({
+  companyName: e.base.name,
+  companyType: e.base.companyType,
+  maxScore: e.extra.maxScore.format((v) => Number(v)),
+  // minScore:e.extra.minScore,
+}))).then((arr) => {
+  type Arr = {
+    readonly companyName: string;
+    readonly companyType: string;
+    readonly maxScore: number | null;
+  }[]
+})

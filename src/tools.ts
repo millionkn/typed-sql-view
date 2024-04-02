@@ -107,8 +107,8 @@ export function flatViewTemplate(template: SqlViewTemplate): Column[] {
   return [...new Set(_flatViewTemplate(template))]
 }
 
-export function getSegmentTarget<T>(segment: Segment<T>): T[] {
-  return segment.map((e) => typeof e === 'object' && e.value).filter((e): e is T => !!e)
+export function getSegmentTarget<T, R>(segment: Segment<T>, filterMap: (v: T) => false | R): R[] {
+  return segment.map((e) => typeof e === 'object' && filterMap(e.value)).filter((r): r is R => !!r)
 }
 
 export function segmentToStr<T>(segment: Segment<T>, toStr: (value: T) => string) {
