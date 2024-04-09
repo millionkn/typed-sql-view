@@ -16,9 +16,9 @@ export class RawSqlCreator {
     const mapper2 = new Map<InnerColumn, string>()
     const formatCbArr = new Array<(raw: { [key: string]: unknown }) => [string, any]>()
     Object.entries(selectTemplate).forEach(([key, column]) => {
-      const alias = `value_${mapper2.size}`
       const { withNull, inner, format } = Column.getOpts(column)
-      mapper2.set(inner, alias)
+      if (!mapper2.has(inner)) { mapper2.set(inner, `value_${mapper2.size}`) }
+      const alias = mapper2.get(inner)!
       formatCbArr.push((raw) => [key, withNull && raw[alias] === null ? null : format(raw[alias])])
     })
     const sqlBody = buildCtx.analysis({
