@@ -46,7 +46,7 @@ export class RawSqlCreator {
       sql,
       params,
       rawFormatter: (raw: { [key: string]: unknown }): {
-        [key in keyof VT]: VT[key] extends Column<infer N, infer R> ? ((N extends false ? never : null) | R) : never
+        -readonly [key in keyof VT]: VT[key] extends Column<infer N, infer R> ? ((N extends false ? never : null) | R) : never
       } => {
         return Object.fromEntries(formatCbArr.map((format) => format(raw))) as any
       }
