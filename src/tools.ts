@@ -38,11 +38,11 @@ export class Column<N extends boolean = boolean, R = unknown, T extends string |
     return r
   }
 
-  readonly tag = <T1 extends T, T2 extends string | null>(preTag: T1, curTag: T2): Column<N, R, T2> => {
+  readonly assert = <T1 extends T, T2 extends string | null = T1>(preTag: T1, curTag?: T2): Column<N, R, T2> => {
     if (this[columnSym].tag !== preTag) {
       throw new Error(`assert tag ${this[columnSym].tag === null ? `{null}` : `'${this[columnSym].tag}'`},but saved is ${this[columnSym].tag === null ? `{null}` : `'${this[columnSym].tag}'`}`)
     }
-    if (preTag as any === curTag) { return this as any }
+    if (curTag === undefined || preTag as any === curTag) { return this as any }
     const r = new Column<N, R, T2>(this.inner)
     r[columnSym] = {
       ...this[columnSym],

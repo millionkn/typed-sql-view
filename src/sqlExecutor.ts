@@ -10,16 +10,16 @@ export class SqlExecutor {
     }
   ) { }
 
-  async selectAll<VT extends { [key: string]: Column<boolean, {}> }>(view: SqlView<VT>) {
+  async selectAll<VT extends { [key: string]: Column<boolean, {} | null> }>(view: SqlView<VT>) {
     const rawSql = this.opts.creator.selectAll(view)
     return this.opts.runner(rawSql.sql, rawSql.params).then((arr) => arr.map((raw) => rawSql.rawFormatter(raw)))
   }
 
-  async selectOne<VT extends { [key: string]: Column<boolean, {}> }>(view: SqlView<VT>) {
+  async selectOne<VT extends { [key: string]: Column<boolean, {} | null> }>(view: SqlView<VT>) {
     return this.selectAll(view.take(1)).then((arr) => arr.at(0) ?? null)
   }
 
-  async aggrateView<VT1 extends SqlViewTemplate, VT2 extends { [key: string]: Column<boolean, {}> }>(
+  async aggrateView<VT1 extends SqlViewTemplate, VT2 extends { [key: string]: Column<boolean, {} | null> }>(
     view: SqlView<VT1>,
     getTemplate: (expr: (target: (ref: GetRefStr<VT1>) => string) => Column<boolean, unknown>) => VT2,
   ) {

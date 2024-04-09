@@ -10,7 +10,7 @@ export class RawSqlCreator {
     }
   ) { }
 
-  selectAll<VT extends { [key: string]: Column<boolean, {}> }>(view: SqlView<VT>) {
+  selectAll<VT extends { [key: string]: Column<boolean, {} | null> }>(view: SqlView<VT>) {
     const buildCtx = SqlView.createBuildCtx(view)
     const selectTemplate = buildCtx.template
     const mapper2 = new Map<InnerColumn, string>()
@@ -53,7 +53,7 @@ export class RawSqlCreator {
     }
   }
 
-  aggrateView<VT1 extends SqlViewTemplate, VT2 extends { [key: string]: Column<boolean, {}> }>(
+  aggrateView<VT1 extends SqlViewTemplate, VT2 extends { [key: string]: Column<boolean, {} | null> }>(
     view: SqlView<VT1>,
     getTemplate: (expr: (target: (ref: GetRefStr<VT1>) => string) => Column<boolean, unknown>) => VT2,
   ) {
