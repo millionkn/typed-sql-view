@@ -84,9 +84,9 @@ export class SqlView<VT1 extends SqlViewTemplate> {
           const keysColumn = flatViewTemplate(keysTemplate).map((c) => Column.getOpts(c).inner)
           const usedColumn = [...new Set(keysColumn.concat(usedContentColumn))]
           const body = buildCtx.analysis({
-            order: ctx.order,
+            order: false,
             usedColumn: usedColumn,
-          }).bracketIf(usedColumn, ({ state }) => hasOneOf(state, ['groupBy', 'having', 'skip', 'take']))
+          }).bracketIf(usedColumn, ({ state }) => hasOneOf(state, ['order', 'groupBy', 'having', 'skip', 'take']))
           body.opts.groupBy = keysColumn.map((inner) => inner.resolvable)
           return body
         },
