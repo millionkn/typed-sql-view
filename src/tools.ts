@@ -14,13 +14,13 @@ export class Column<N extends boolean = boolean, R = unknown> {
   readonly withNull = <const N extends boolean>(value: N): Column<N, R> => {
     const r = new Column<N, R>(this.inner)
     r._withNull = value
-    r._format = r._format
+    r._format = this._format
     return r
   }
 
   readonly format = <R>(value: (raw: unknown) => R): Column<N, R> => {
     const r = new Column<N, R>(this.inner)
-    r._withNull = r._withNull
+    r._withNull = this._withNull
     r._format = value
     return r
   }
