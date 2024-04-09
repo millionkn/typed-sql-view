@@ -8,7 +8,7 @@ export function createFromDefine<const VT extends SqlViewTemplate>(
 ) {
   return new SqlView(() => {
     const sym = {}
-    const template = getTemplate((columnExpr) => new Column(new InnerColumn((ctx) => columnExpr(ctx.resolveSym(sym)))))
+    const template = getTemplate((columnExpr) => Column.create(new InnerColumn((ctx) => columnExpr(ctx.resolveSym(sym)))))
     return {
       template,
       analysis: (ctx) => {

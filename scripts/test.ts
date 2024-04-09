@@ -3,14 +3,14 @@ import z from 'zod'
 
 const companyTableDefine = createFromDefine(`"public"."tableName1"`, (define) => {
   return {
-    companyId: define((alias) => `"${alias}"."column_a"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
+    companyId: define((alias) => `"${alias}"."column_a"`).tag(null, 'companyId').withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
     companyType: define((alias) => `"${alias}"."column_b"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
     name: define((alias) => `"${alias}"."column_c"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
   }
 })
 
 const personTableDefine = createFromDefine(`"public"."tableName2"`, (define) => {
-  const companyId = define((alias) => `"${alias}"."column_a"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw))
+  const companyId = define((alias) => `"${alias}"."column_a"`).tag(null, `companyId`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw))
   const identify = define((alias) => `"${alias}"."column_b"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw))
   return {
     companyId,
@@ -27,7 +27,8 @@ const view = personTableDefine
   //根据业务要求,知道person最多有一个company,无论是否join 'company表'都不会影响'person表'的数量
   //所以可以使用lazy,如果后面没有用到,就不进行join
   //ps:left和inner都会立刻join,因为表的数量可能会被影响
-  .join('lazy', true, companyTableDefine, ({ ref }) => `${ref((e) => e.base.companyId)} = ${ref((e) => e.extra.companyId)}`)
+  //此处使用tag验证标签,一定程度上避免引用错误(可选)
+  .join('lazy', true, companyTableDefine, ({ ref }) => `${ref((e) => e.base.companyId.tag('companyId', 'companyId'))} = ${ref((e) => e.extra.companyId.tag('companyId', 'companyId'))}`)
   .pipe((view) => {
     return view
       .groupBy((e) => e.extra.companyType, (define) => {

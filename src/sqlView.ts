@@ -75,7 +75,7 @@ export class SqlView<VT1 extends SqlViewTemplate> {
         const segment = resolveExpr<InnerColumn>((holder) => columnExpr((ref) => holder(Column.getOpts(ref(buildCtx.template)).inner)))
         const inner = new InnerColumn((ctx) => segmentToStr(segment, (inner) => inner.resolvable(ctx)))
         info.set(inner, segment)
-        return new Column(inner)
+        return Column.create(inner)
       })
       return {
         template: { keys: keysTemplate, content: contentTemplate },
@@ -188,7 +188,7 @@ export class SqlView<VT1 extends SqlViewTemplate> {
           const segment = resolveExpr<InnerColumn>((holder) => getExpr((c) => holder(Column.getOpts(c).inner)))
           const inner = new InnerColumn((ctx) => segmentToStr(segment, (inner) => inner.resolvable(ctx)))
           info.set(inner, segment)
-          return new Column(inner)
+          return Column.create(inner)
         }),
         analysis: (ctx) => buildCtx.analysis({
           order: ctx.order,

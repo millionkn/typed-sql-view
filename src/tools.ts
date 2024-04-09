@@ -6,13 +6,17 @@ export class InnerColumn {
   ) { }
 }
 
-export class Column<N extends boolean = boolean, R = unknown, T extends string | null = null> {
+export class Column<N extends boolean = boolean, R = unknown, T extends string | null = string | null> {
   private opts = {
     withNull: true,
     format: (raw: unknown): R => { throw new Error() },
     tag: null as T,
   }
-  constructor(private inner: InnerColumn) { }
+  private constructor(private inner: InnerColumn) { }
+  static create(inner: InnerColumn) {
+    return new Column<boolean, unknown, null>(inner)
+  }
+
 
   readonly withNull = <const N extends boolean>(value: N): Column<N, R, T> => {
     const r = new Column<N, R, T>(this.inner)
@@ -32,17 +36,18 @@ export class Column<N extends boolean = boolean, R = unknown, T extends string |
     return r
   }
 
-  readonly setTag = <T extends string | null>(value: T): Column<N, R, T> => {
-    const r = new Column<N, R, T>(this.inner)
+  readonly tag = <T1 extends T, T2 extends string | null>(preTag: T1, curTag: T2): Column<N, R, T2> => {
+    if (this.opts.tag !== preTag) {
+
+      throw new Error(`assert tag ${this.opts.tag === null ? `{null}` : `'${this.opts.tag}'`},but saved is ${this.opts.tag === null ? `{null}` : `'${this.opts.tag}'`}`)
+    }
+    if (preTag as any === curTag) { return this as any }
+    const r = new Column<N, R, T2>(this.inner)
     r.opts = {
       ...this.opts,
-      tag: value,
+      tag: curTag,
     }
     return r
-  }
-  readonly assertTag = (value: T): Column<N, R, T> => {
-    if (this.opts.tag === value) { return this }
-    throw new Error(`assert tag '${value}',but current tag is ${this.opts.tag === null ? `null` : `'${this.opts.tag}'`}`)
   }
 
   static getOpts(column: Column) {
@@ -56,19 +61,19 @@ export class Column<N extends boolean = boolean, R = unknown, T extends string |
 export type DeepTemplate<I> = I | (readonly DeepTemplate<I>[]) | { readonly [key: string]: DeepTemplate<I> }
 export type SqlViewTemplate = DeepTemplate<Column>
 
-export type ColumnDeclareFun<I> = (columnExpr: (input: I) => string) => Column<boolean, unknown>
+export type ColumnDeclareFun<I> = (columnExpr: (input: I) => string) => Column<boolean, unknown, null>
 
 export type GetRefStr<VT extends SqlViewTemplate> = (ref: (template: VT) => Column) => string
 
 type _Relation<N extends boolean, VT extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }> = {
   [key in keyof VT]
   : VT[key] extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate } ? _Relation<N, VT[key]>
-  : VT[key] extends Column<infer N2, infer X> ? Column<(N2 & N) extends true ? true : boolean, X>
+  : VT[key] extends Column<infer N2, infer X, infer T> ? Column<(N2 & N) extends true ? true : boolean, X, T>
   : never
 }
 
 export type Relation<N extends boolean, VT extends SqlViewTemplate> = N extends false ? VT
-  : VT extends Column<infer N2, infer X> ? Column<(N2 & N) extends true ? true : boolean, X>
+  : VT extends Column<infer N2, infer X, infer T> ? Column<(N2 & N) extends true ? true : boolean, X, T>
   : _Relation<N, Extract<VT, readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }>>
 
 export type Segment<T = unknown> = Array<string | { value: T }>
