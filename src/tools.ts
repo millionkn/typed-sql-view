@@ -6,30 +6,49 @@ export class InnerColumn {
   ) { }
 }
 
-export class Column<N extends boolean = boolean, R = unknown> {
-  private _withNull = true
-  private _format = (raw: unknown): R => { throw new Error() }
+export class Column<N extends boolean = boolean, R = unknown, T extends string | null = null> {
+  private opts = {
+    withNull: true,
+    format: (raw: unknown): R => { throw new Error() },
+    tag: null as T,
+  }
   constructor(private inner: InnerColumn) { }
 
-  readonly withNull = <const N extends boolean>(value: N): Column<N, R> => {
-    const r = new Column<N, R>(this.inner)
-    r._withNull = value
-    r._format = this._format
+  readonly withNull = <const N extends boolean>(value: N): Column<N, R, T> => {
+    const r = new Column<N, R, T>(this.inner)
+    r.opts = {
+      ...this.opts,
+      withNull: value
+    }
     return r
   }
 
-  readonly format = <R>(value: (raw: unknown) => R): Column<N, R> => {
-    const r = new Column<N, R>(this.inner)
-    r._withNull = this._withNull
-    r._format = value
+  readonly format = <R>(value: (raw: unknown) => R): Column<N, R, T> => {
+    const r = new Column<N, R, T>(this.inner)
+    r.opts = {
+      ...this.opts,
+      format: value
+    }
     return r
+  }
+
+  readonly setTag = <T extends string | null>(value: T): Column<N, R, T> => {
+    const r = new Column<N, R, T>(this.inner)
+    r.opts = {
+      ...this.opts,
+      tag: value,
+    }
+    return r
+  }
+  readonly assertTag = (value: T): Column<N, R, T> => {
+    if (this.opts.tag === value) { return this }
+    throw new Error(`assert tag '${value}',but current tag is ${this.opts.tag === null ? `null` : `'${this.opts.tag}'`}`)
   }
 
   static getOpts(column: Column) {
     return {
       inner: column.inner,
-      format: column._format,
-      withNull: column._withNull,
+      ...column.opts,
     }
   }
 }
