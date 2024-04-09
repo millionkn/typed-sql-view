@@ -6,8 +6,10 @@ export class InnerColumn {
   ) { }
 }
 
+const columnSym = Symbol()
+
 export class Column<N extends boolean = boolean, R = unknown, T extends string | null = string | null> {
-  private opts = {
+  public [columnSym] = {
     withNull: true,
     format: (raw: unknown): R => { throw new Error() },
     tag: null as T,
@@ -20,8 +22,8 @@ export class Column<N extends boolean = boolean, R = unknown, T extends string |
 
   readonly withNull = <const N extends boolean>(value: N): Column<N, R, T> => {
     const r = new Column<N, R, T>(this.inner)
-    r.opts = {
-      ...this.opts,
+    r[columnSym] = {
+      ...this[columnSym],
       withNull: value
     }
     return r
@@ -29,31 +31,30 @@ export class Column<N extends boolean = boolean, R = unknown, T extends string |
 
   readonly format = <R>(value: (raw: unknown) => R): Column<N, R, T> => {
     const r = new Column<N, R, T>(this.inner)
-    r.opts = {
-      ...this.opts,
+    r[columnSym] = {
+      ...this[columnSym],
       format: value
     }
     return r
   }
 
   readonly tag = <T1 extends T, T2 extends string | null>(preTag: T1, curTag: T2): Column<N, R, T2> => {
-    if (this.opts.tag !== preTag) {
-
-      throw new Error(`assert tag ${this.opts.tag === null ? `{null}` : `'${this.opts.tag}'`},but saved is ${this.opts.tag === null ? `{null}` : `'${this.opts.tag}'`}`)
+    if (this[columnSym].tag !== preTag) {
+      throw new Error(`assert tag ${this[columnSym].tag === null ? `{null}` : `'${this[columnSym].tag}'`},but saved is ${this[columnSym].tag === null ? `{null}` : `'${this[columnSym].tag}'`}`)
     }
     if (preTag as any === curTag) { return this as any }
     const r = new Column<N, R, T2>(this.inner)
-    r.opts = {
-      ...this.opts,
+    r[columnSym] = {
+      ...this[columnSym],
       tag: curTag,
     }
     return r
   }
 
-  static getOpts(column: Column) {
+  static getOpts<N extends boolean = boolean, R = unknown, T extends string | null = string | null>(column: Column<N, R, T>) {
     return {
       inner: column.inner,
-      ...column.opts,
+      ...column[columnSym],
     }
   }
 }
