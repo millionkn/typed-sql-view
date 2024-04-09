@@ -4,13 +4,15 @@ import { Column, GetRefStr, SqlViewTemplate } from "./tools.js";
 
 export class SqlExecutor {
   constructor(
-    private creator: RawSqlCreator,
-    private runner: (sql: string, params: unknown[]) => Promise<{ [key: string]: unknown }[]>
+    private opts: {
+      creator: RawSqlCreator,
+      runner: (sql: string, params: unknown[]) => Promise<{ [key: string]: unknown }[]>
+    }
   ) { }
 
   async selectAll<VT extends { [key: string]: Column<boolean, {}> }>(view: SqlView<VT>) {
-    const rawSql = this.creator.selectAll(view)
-    return this.runner(rawSql.sql, rawSql.params).then((arr) => arr.map((raw) => rawSql.rawFormatter(raw)))
+    const rawSql = this.opts.creator.selectAll(view)
+    return this.opts.runner(rawSql.sql, rawSql.params).then((arr) => arr.map((raw) => rawSql.rawFormatter(raw)))
   }
 
   async selectOne<VT extends { [key: string]: Column<boolean, {}> }>(view: SqlView<VT>) {
@@ -21,8 +23,8 @@ export class SqlExecutor {
     view: SqlView<VT1>,
     getTemplate: (expr: (target: (ref: GetRefStr<VT1>) => string) => Column<boolean, unknown>) => VT2,
   ) {
-    const rawSelect = this.creator.aggrateView(view, getTemplate)
-    return this.runner(rawSelect.sql, rawSelect.params).then(([raw]) => {
+    const rawSelect = this.opts.creator.aggrateView(view, getTemplate)
+    return this.opts.runner(rawSelect.sql, rawSelect.params).then(([raw]) => {
       if (!raw) { throw new Error('aggrate no result') }
       return rawSelect.rawFormatter(raw)
     })

@@ -92,19 +92,20 @@ console.log(creator.selectAll(view.mapTo((e) => ({
 }))))
 
 
-const executor = new SqlExecutor(
+const executor = new SqlExecutor({
   //适配mysql
-  new RawSqlCreator({
+  creator: new RawSqlCreator({
     paramHolder: (index) => `:param${index}`,
     skip: 'skip',
     take: 'take',
-  }), async (sql, params) => {
+  }),
+  runner: async (sql, params) => {
     console.log({ sql, params })
-
     // 使用其他工具进行query
     // ...
     return []
-  })
+  }
+})
 
 
 /**
