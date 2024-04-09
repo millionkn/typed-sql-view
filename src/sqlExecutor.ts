@@ -36,7 +36,7 @@ export class SqlExecutor {
     }).then((e) => e.count)
   }
 
-  async selectList<VT extends { [key: string]: Column<boolean, {}> }>(withCount: boolean, take: number, skip: number, view: SqlView<VT>) {
+  async selectList<VT extends { [key: string]: Column<boolean, {} | null> }>(withCount: boolean, take: number, skip: number, view: SqlView<VT>) {
     return Promise.all([
       this.selectAll(view.take(take).skip(skip)),
       withCount ? this.getTotal(view) : -1,
