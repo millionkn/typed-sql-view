@@ -142,3 +142,25 @@ executor.selectAll(view.mapTo((e) => ({
     readonly maxScore: number | null;
   }[]
 })
+
+console.log(createFromDefine(`"public"."tableName3"`, (define) => {
+  return {
+    id: define((alias) => `"${alias}"."column_a"`).assert(null, 'companyId').withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
+    name: define((alias) => `"${alias}"."column_b"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
+    targetArr: define((alias) => `"${alias}"."column_c"`).withNull(false).assert(null, 'str split by ","'),
+  }
+}).forceMapTo((e, c) => {
+  return {
+    id: e.id,
+    name: e.name,
+    target: c((ref) => `regexp_split_to_table(${ref(e.targetArr.assert('str split by ","'))}, ',')`).withNull(false).format((raw) => String(raw))
+  }
+})
+  .andWhere(({ ref, param }) => `${ref((e) => e.target)} = ${param('zzz')}`)
+  .pipe((view) => {
+    return new RawSqlCreator({
+      paramHolder: (index) => `$${index + 1}`,
+      skip: 'offset',
+      take: 'limit',
+    }).selectAll(view)
+  })) 

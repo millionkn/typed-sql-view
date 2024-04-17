@@ -198,6 +198,30 @@ export class SqlView<VT1 extends SqlViewTemplate> {
     })
   }
 
+  forceMapTo = <const VT extends SqlViewTemplate>(getTemplate: (e: VT1, define: ColumnDeclareFun<(c: Column) => string>) => VT): SqlView<VT> => {
+    return new SqlView(() => {
+      const createdColumn = new Array<Column>()
+      const buildCtx = this
+        .bracketIf(({ state }) => hasOneOf(state, ['groupBy', 'order', 'skip', 'take', 'where']))
+        .mapTo((e, define) => getTemplate(e, (getExpr) => {
+          const column = define(getExpr)
+          createdColumn.push(column)
+          return column
+        }))
+        .createBuildCtx()
+      return {
+        template: buildCtx.template,
+        analysis: (ctx) => {
+          const usedColumn = [...new Set(ctx.usedColumn.concat(createdColumn.map((e) => Column.getOpts(e).inner)))]
+          return buildCtx.analysis({
+            order: ctx.order,
+            usedColumn,
+          }).bracketIf(usedColumn, () => true)
+        }
+      }
+    })
+  }
+
   bracketIf = (condation: (opts: {
     state: SqlState[],
   }) => boolean): SqlView<VT1> => {
