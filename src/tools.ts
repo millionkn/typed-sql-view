@@ -29,11 +29,11 @@ export class Column<N extends boolean = boolean, R = unknown, T extends string |
     return r
   }
 
-  readonly format = <R>(value: (raw: unknown) => R): Column<N, R, T> => {
-    const r = new Column<N, R, T>(this.inner)
+  readonly format = <R2>(value: (raw: unknown, format: (raw: unknown) => R) => R2): Column<N, R2, T> => {
+    const r = new Column<N, R2, T>(this.inner)
     r[columnSym] = {
       ...this[columnSym],
-      format: value
+      format: (raw) => value(raw, (raw) => this[columnSym].format(raw))
     }
     return r
   }
