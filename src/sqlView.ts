@@ -1,61 +1,70 @@
-import { SqlBody } from "./sqlBody.js";
-import { Column, ColumnDeclareFun, GetRefStr, InnerColumn, Relation, Resolvable, Segment, SqlState, SqlViewTemplate, exec, flatViewTemplate, getSegmentTarget, hasOneOf, pickConfig, resolveExpr, segmentToStr } from "./tools.js";
+import { AliasSym, AnalysisResult, BuildContext, Column, DefaultColumnType, GetColumnHolder, InitContext, Inner, Relation, Segment, SqlState, SqlViewTemplate } from "./define.js"
+import { exec, hasOneOf, pickConfig } from "./private.js"
+import { SqlBody } from "./sqlBody.js"
+import { flatViewTemplate, resolveSqlStr } from "./tools.js"
+
+export type SqlViewInstance<VT extends SqlViewTemplate> = {
+  template: VT,
+  getSqlBody: (info: AnalysisResult) => SqlBody,
+}
+
+export type ColumnDeclareFun<T> = (columnExpr: (input: T) => string) => DefaultColumnType
 
 export class SqlView<VT1 extends SqlViewTemplate> {
   constructor(
-    private createBuildCtx: () => {
-      template: VT1,
-      analysis: (ctx: {
-        order: boolean,
-        usedColumn: InnerColumn[]
-      }) => SqlBody,
-    },
+    public getInstance: (init: InitContext) => SqlViewInstance<VT1>,
   ) { }
 
-  pipe = <R>(op: (self: this) => R): R => {
-    return op(this)
-  }
+  pipe = <R>(op: (self: this) => R): R => op(this)
 
-  andWhere = (getExpr: (tools: {
-    ref: GetRefStr<VT1>,
+  andWhere = (getCondationStr: (tools: {
+    ref: GetColumnHolder<VT1>,
     param: (value: any) => string,
-    select1From: (view: SqlView<SqlViewTemplate>) => string,
+    buildCtx: BuildContext,
+    getInstance: <VT extends SqlViewTemplate>(view: SqlView<VT>) => SqlViewInstance<VT>,
   }) => null | false | undefined | string): SqlView<VT1> => {
-    return new SqlView(() => {
-      const buildCtx = this.createBuildCtx()
-      const segment = resolveExpr<Resolvable | InnerColumn>((holder) => getExpr({
-        ref: (ref) => holder(Column.getOpts(ref(buildCtx.template)).inner),
-        param: (value) => holder((ctx) => ctx.setParam(value)),
-        select1From: (view) => view
-          .createBuildCtx()
-          .analysis({ order: false, usedColumn: [] })
-          .build(new Map([[() => `1`, '1']]), {
-            genTableAlias: () => holder(exec(() => {
-              let saved = ''
-              return (ctx) => saved ||= ctx.genTableAlias()
-            })),
-            resolveSym: (sym) => holder((ctx) => ctx.resolveSym(sym)),
-            setParam: (value) => holder(exec(() => {
-              let saved = ''
-              return (ctx) => saved ||= ctx.setParam(value)
-            })),
-            sym: {
-              skip: holder((ctx) => ctx.sym.skip) as any,
-              take: holder((ctx) => ctx.sym.take) as any,
-            }
-          }),
-      }) || '')
-      if (segment.length === 0) { return buildCtx }
+    return new SqlView((initCtx) => {
+      const instance = this.getInstance(initCtx)
+      const expr = resolveSqlStr<{
+        type: 'aliasSym', aliasSym: AliasSym
+      } | {
+        type: 'inner',
+        inner: Inner,
+      }>((holder) => {
+        const str = getCondationStr({
+          ref: (ref) => holder({ type: 'inner', inner: ref(instance.template).opts.inner }),
+          param: initCtx.setParam,
+          getInstance: (view) => view.getInstance(initCtx),
+          buildCtx: {
+            resolveAliasSym: (aliasSym) => holder({ type: 'aliasSym', aliasSym })
+          }
+        })
+        return typeof str !== 'string' ? '' : str.trim()
+      })
+      if (expr.length === 0) { return instance }
       return {
-        template: buildCtx.template,
-        analysis: (ctx) => {
-          const body = buildCtx.analysis({
-            order: ctx.order,
-            usedColumn: ctx.usedColumn.concat(getSegmentTarget(segment, (e) => e instanceof InnerColumn && e))
-          }).bracketIf(ctx.usedColumn, ({ state }) => hasOneOf(state, ['skip', 'take']))
-          const target = body.opts.groupBy.length === 0 ? body.opts.where : body.opts.having
-          target.push((ctx) => segmentToStr(segment, (e) => e instanceof InnerColumn ? e.resolvable(ctx) : e(ctx)))
-          return body
+        template: instance.template,
+        getSqlBody: (info) => {
+          const usedInner = [...new Set(info.usedInner.concat(
+            expr.flatMap((e) => typeof e !== 'object' || e.type !== 'inner' ? [] : e.inner)
+          ))]
+          let sqlBody = instance.getSqlBody({
+            order: info.order,
+            usedInner,
+          })
+          if (hasOneOf(sqlBody.state(), ['take', 'skip'])) {
+            sqlBody = sqlBody.bracket(usedInner)
+          }
+          const target = sqlBody.opts.groupBy.length === 0 ? sqlBody.opts.where : sqlBody.opts.having
+          target.push(expr.flatMap((e) => {
+            if (typeof e === 'string') { return e }
+            if (e.type === 'aliasSym') {
+              return e.aliasSym
+            } else {
+              return e.inner.segment
+            }
+          }))
+          return sqlBody
         },
       }
     })
@@ -64,37 +73,40 @@ export class SqlView<VT1 extends SqlViewTemplate> {
   groupBy = <const K extends SqlViewTemplate, const VT extends SqlViewTemplate>(
     getKeyTemplate: (vt: VT1) => K,
     getValueTemplate: (
-      define: ColumnDeclareFun<GetRefStr<VT1>>,
+      define: ColumnDeclareFun<GetColumnHolder<VT1>>,
     ) => VT,
   ): SqlView<{ keys: K, content: VT }> => {
-    return new SqlView(() => {
-      const buildCtx = this.createBuildCtx()
-      const info = new Map<InnerColumn, Segment<InnerColumn>>()
-      const keysTemplate = getKeyTemplate(buildCtx.template)
-      const contentTemplate = getValueTemplate((columnExpr) => {
-        const segment = resolveExpr<InnerColumn>((holder) => columnExpr((ref) => holder(Column.getOpts(ref(buildCtx.template)).inner)))
-        const inner = new InnerColumn((ctx) => segmentToStr(segment, (inner) => inner.resolvable(ctx)))
-        info.set(inner, segment)
-        return Column.create(inner)
+    return this
+      .mapTo((template, define) => {
+        return {
+          keys: getKeyTemplate(template),
+          content: getValueTemplate((expr) => define((c) => expr((ref) => c(ref(template)))))
+        }
       })
-      return {
-        template: { keys: keysTemplate, content: contentTemplate },
-        analysis: (ctx) => {
-          const usedContentColumn = ctx.usedColumn.flatMap((inner) => getSegmentTarget(info.get(inner) || [], (v) => v))
-          const keysColumn = flatViewTemplate(keysTemplate).map((c) => Column.getOpts(c).inner)
-          const usedColumn = [...new Set(keysColumn.concat(usedContentColumn))]
-          const body = buildCtx.analysis({
-            order: false,
-            usedColumn: usedColumn,
-          }).bracketIf(usedColumn, ({ state }) => hasOneOf(state, ['order', 'groupBy', 'having', 'skip', 'take']))
-          body.opts.groupBy = keysColumn.map((inner) => inner.resolvable)
-          return body
-        },
-      }
-    })
+      .pipe((view) => new SqlView((init) => {
+        const instance = view.getInstance(init)
+        return {
+          template: instance.template,
+          getSqlBody: (info) => {
+            const groupBy = [...new Set(flatViewTemplate(instance.template.keys).map((c) => c.opts.inner))]
+            const usedInner = [...new Set(info.usedInner.concat(groupBy))]
+            let sqlBody = instance.getSqlBody({
+              order: info.order,
+              usedInner,
+            })
+            if (hasOneOf(sqlBody.state(), ['order', 'groupBy', 'having', 'skip', 'take'])) {
+              sqlBody = sqlBody.bracket(usedInner)
+            }
+            sqlBody.opts.groupBy = groupBy.map((inner) => inner.segment)
+            return sqlBody
+          }
+        }
+      }))
   }
 
-  join = <
+
+
+  join<
     M extends 'left' | 'inner' | 'lazy',
     N extends { inner: false, left: boolean, lazy: boolean }[M],
     VT2 extends SqlViewTemplate,
@@ -102,63 +114,93 @@ export class SqlView<VT1 extends SqlViewTemplate> {
     mode: M,
     withNull: N,
     view: SqlView<VT2>,
-    getCondation: (tools: {
-      ref: GetRefStr<{ base: VT1, extra: VT2 }>,
+    getCondationExpr: (tools: {
+      ref: GetColumnHolder<{ base: VT1, extra: VT2 }>,
     }) => string,
-  ): SqlView<{ base: VT1, extra: Relation<N, VT2> }> => {
-    return new SqlView(() => {
-      const base = this.createBuildCtx()
-      const extra = view.createBuildCtx()
-      const condation = resolveExpr<InnerColumn>((holder) => getCondation({
-        ref: (ref) => holder(Column.getOpts(ref({
-          base: base.template,
-          extra: extra.template,
-        })).inner),
-      }))
-      const extraColumnArr = [...new Set(flatViewTemplate(extra.template).map((c) => {
-        const opts = Column.getOpts(c)
-        opts.withNull ||= withNull
-        return opts.inner
-      }))]
+  ): SqlView<{ base: VT1, extra: Relation<N, VT2> }> {
+    return new SqlView((init) => {
+      const sp = exec(() => {
+        const base = this.getInstance(init)
+        const extra = view.getInstance(init)
+        const condationExpr = resolveSqlStr<Inner>((holder) => getCondationExpr({
+          ref: (ref) => holder(ref({
+            base: base.template,
+            extra: extra.template,
+          }).opts.inner),
+        }))
+        const usedInnerInCondation = condationExpr
+          .filter((e): e is Inner => typeof e === 'object')
+        const extraColumnArr = flatViewTemplate(extra.template)
+        extraColumnArr.forEach((c) => c.opts.withNull ||= withNull)
+        return {
+          base: {
+            instance: base,
+            inner: new Set(flatViewTemplate(base.template).map((e) => e.opts.inner)),
+          },
+          extra: {
+            instance: extra,
+            inner: new Set(flatViewTemplate(extra.template).map((e) => e.opts.inner)),
+          },
+          condationExpr,
+          usedInnerInCondation,
+        }
+      })
+
       return {
         template: {
-          base: base.template,
-          extra: extra.template as Relation<N, VT2>,
+          base: sp.base.instance.template,
+          extra: sp.extra.instance.template as Relation<N, VT2>,
         },
-        analysis: (ctx) => {
-          if (mode === 'lazy' && !extraColumnArr.find((inner) => ctx.usedColumn.includes(inner))) {
-            return base.analysis(ctx)
+        getSqlBody: (info) => {
+          if (mode === 'lazy') {
+            if (!info.usedInner.find((inner) => sp.extra.inner.has(inner))) {
+              return sp.base.instance.getSqlBody(info)
+            }
+            if (!withNull && !info.order) {
+              if (!info.usedInner.find((inner) => sp.base.inner.has(inner))) {
+                return sp.extra.instance.getSqlBody(info)
+              }
+            }
           }
-          const baseColumnArr = [...new Set(flatViewTemplate(base.template).map((c) => Column.getOpts(c).inner))]
-          const usedBaseColumn = ctx.usedColumn.filter((inner) => baseColumnArr.includes(inner)).concat(getSegmentTarget(condation, (e) => baseColumnArr.includes(e) && e))
-          const usedExtraColumn = ctx.usedColumn.filter((inner) => extraColumnArr.includes(inner)).concat(getSegmentTarget(condation, (e) => extraColumnArr.includes(e) && e))
-          let baseBody = base.analysis({
-            order: ctx.order,
-            usedColumn: usedBaseColumn,
-          }).bracketIf(usedBaseColumn, ({ state }) => hasOneOf(state, ['groupBy', 'having', 'order', 'skip', 'take']))
-          let extraBody = extra.analysis({
-            usedColumn: usedExtraColumn,
+          const usedInner = [...new Set(info.usedInner.concat(sp.usedInnerInCondation))]
+          const baseUsedInner = usedInner.filter((inner) => sp.base.inner.has(inner))
+          const extraUsedInner = usedInner.filter((inner) => sp.extra.inner.has(inner))
+          const baseBody = exec(() => {
+            let sqlBody = sp.base.instance.getSqlBody({
+              order: info.order,
+              usedInner: baseUsedInner,
+            })
+            if (hasOneOf(sqlBody.state(), ['groupBy', 'having', 'order', 'skip', 'take'])) {
+              sqlBody = sqlBody.bracket(baseUsedInner)
+            }
+            return sqlBody
+          })
+          let extraBody = sp.extra.instance.getSqlBody({
+            usedInner: extraUsedInner,
             order: pickConfig(mode satisfies "inner" | "left" | "lazy", {
               'lazy': () => false,
-              'left': () => ctx.order,
-              'inner': () => ctx.order,
+              'left': () => info.order,
+              'inner': () => info.order,
             }),
-          }).bracketIf(usedExtraColumn, ({ state }) => {
-            return pickConfig(mode satisfies "inner" | "left" | "lazy", {
-              lazy: () => hasOneOf(state, ['innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take']),
-              left: () => hasOneOf(state, ['innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take']),
-              inner: () => hasOneOf(state, ['leftJoin', 'innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take']),
-            })
           })
-          return new SqlBody({
+          pickConfig(mode satisfies "inner" | "left" | "lazy", {
+            lazy: () => hasOneOf(extraBody.state(), ['innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take']),
+            left: () => hasOneOf(extraBody.state(), ['innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take']),
+            inner: () => hasOneOf(extraBody.state(), ['leftJoin', 'innerJoin', 'groupBy', 'having', 'order', 'skip', 'take']),
+          }) && extraBody.bracket(extraUsedInner)
+          return new SqlBody(init, {
             from: baseBody.opts.from,
             join: [
               ...baseBody.opts.join ?? [],
               {
-                type: mode === 'inner' ? 'inner' : 'left',
+                type: pickConfig(mode satisfies "inner" | "left" | "lazy", {
+                  left: () => 'left',
+                  inner: () => 'inner',
+                  lazy: () => 'left',
+                }),
                 aliasSym: extraBody.opts.from.aliasSym,
-                resolvable: extraBody.opts.from.resolvable,
-                condation: (ctx) => segmentToStr(condation, (inner) => inner.resolvable(ctx)),
+                segment: extraBody.opts.from.segment,
+                condation: sp.condationExpr.flatMap((e) => typeof e === 'string' ? e : e.segment),
               },
               ...extraBody.opts.join ?? [],
             ],
@@ -174,85 +216,83 @@ export class SqlView<VT1 extends SqlViewTemplate> {
     })
   }
 
-  mapTo = <const VT extends SqlViewTemplate>(getTemplate: (e: VT1, define: ColumnDeclareFun<(c: Column) => string>) => VT): SqlView<VT> => {
-    return new SqlView(() => {
-      const buildCtx = this.createBuildCtx()
-      const info = new Map<InnerColumn, Segment<InnerColumn>>()
-      const flat = (innerArr: InnerColumn[]): InnerColumn[] => innerArr.flatMap((inner) => {
-        const segment = info.get(inner)
-        if (!segment) { return [inner] }
-        return flat(getSegmentTarget(segment, (inner) => inner))
-      })
+  mapTo<const VT extends SqlViewTemplate>(getTemplate: (e: VT1, define: ColumnDeclareFun<(c: Column) => string>) => VT): SqlView<VT> {
+    return new SqlView((init) => {
+      const instance = this.getInstance(init)
+      const columnHelper = init.createColumnHelper()
       return {
-        template: getTemplate(buildCtx.template, (getExpr) => {
-          const segment = resolveExpr<InnerColumn>((holder) => getExpr((c) => holder(Column.getOpts(c).inner)))
-          const inner = new InnerColumn((ctx) => segmentToStr(segment, (inner) => inner.resolvable(ctx)))
-          info.set(inner, segment)
-          return Column.create(inner)
-        }),
-        analysis: (ctx) => buildCtx.analysis({
-          order: ctx.order,
-          usedColumn: flat(ctx.usedColumn),
-        })
+        template: getTemplate(instance.template, (cr) => columnHelper.createColumn((ir) => cr((c) => ir(c.opts.inner)))),
+        getSqlBody: (info) => {
+          return instance.getSqlBody({
+            order: info.order,
+            usedInner: [...new Set(info.usedInner.flatMap((inner) => columnHelper.getDeps(inner) ?? inner))]
+          })
+        },
       }
     })
   }
 
-  forceMapTo = <const VT extends SqlViewTemplate>(getTemplate: (e: VT1, define: ColumnDeclareFun<(c: Column) => string>) => VT): SqlView<VT> => {
-    return new SqlView(() => {
-      const createdColumn = new Array<Column>()
-      const buildCtx = this
-        .bracketIf(({ state }) => hasOneOf(state, ['groupBy', 'order', 'skip', 'take', 'where']))
-        .mapTo((e, define) => getTemplate(e, (getExpr) => {
-          const column = define(getExpr)
-          createdColumn.push(column)
-          return column
-        }))
-        .createBuildCtx()
-      return {
-        template: buildCtx.template,
-        analysis: (ctx) => {
-          const usedColumn = [...new Set(ctx.usedColumn.concat(createdColumn.map((e) => Column.getOpts(e).inner)))]
-          return buildCtx.analysis({
-            order: ctx.order,
-            usedColumn,
-          }).bracketIf(usedColumn, () => true)
+  forceMapTo<VT extends SqlViewTemplate>(getTemplate: (e: VT1, define: ColumnDeclareFun<(c: Column) => string>) => VT): SqlView<VT> {
+    return this
+      .bracketIf(({ state }) => hasOneOf(state, ['groupBy', 'order', 'skip', 'take', 'where']))
+      .mapTo(getTemplate)
+      .pipe((view) => new SqlView((init) => {
+        const instance = view.getInstance(init)
+        return {
+          template: instance.template,
+          getSqlBody: (info) => instance.getSqlBody({
+            order: info.order,
+            usedInner: [...new Set(flatViewTemplate(instance.template).map((e) => e.opts.inner))],
+          }),
         }
-      }
-    })
+      }))
   }
 
-  bracketIf = (condation: (opts: {
+  bracketIf(condation: (opts: {
     state: SqlState[],
-  }) => boolean): SqlView<VT1> => {
-    return new SqlView(() => {
-      const buildCtx = this.createBuildCtx()
+  }) => boolean) {
+    return new SqlView((init) => {
+      const instance = this.getInstance(init)
       return {
-        template: buildCtx.template,
-        analysis: (ctx) => buildCtx.analysis(ctx).bracketIf(ctx.usedColumn, condation),
+        template: instance.template,
+        getSqlBody: (info) => {
+          const sqlBody = instance.getSqlBody(info)
+          if (condation({ state: [...sqlBody.state()] })) {
+            return sqlBody.bracket(info.usedInner)
+          } else {
+            return sqlBody
+          }
+        },
       }
     })
   }
 
   order = (
     order: 'asc' | 'desc',
-    getExpr: (ref: GetRefStr<VT1>) => string,
+    getExpr: (ref: GetColumnHolder<VT1>) => false | null | undefined | string,
   ): SqlView<VT1> => {
-    return new SqlView(() => {
-      const buildCtx = this.createBuildCtx()
-      const segment = resolveExpr<InnerColumn>((holder) => getExpr((ref) => holder(Column.getOpts(ref(buildCtx.template)).inner)))
+    return new SqlView((init) => {
+      const instance = this.getInstance(init)
       return {
-        template: buildCtx.template,
-        analysis: (ctx) => {
-          if (!ctx.order) { return buildCtx.analysis(ctx) }
-          const usedColumn = [...new Set(ctx.usedColumn.concat(getSegmentTarget(segment, (e) => e)))]
-          const sqlBody = buildCtx.analysis({
-            order: ctx.order,
-            usedColumn,
-          }).bracketIf(usedColumn, ({ state }) => hasOneOf(state, ['skip', 'take']))
+        template: instance.template,
+        getSqlBody: (info) => {
+          if (!info.order) { return instance.getSqlBody(info) }
+          const expr = resolveSqlStr<Inner>((holder) => {
+            const expr = getExpr((ref) => holder(ref(instance.template).opts.inner))
+            if (typeof expr === 'string') { return expr.trim() }
+            return ''
+          })
+          const usedInner = [...new Set(info.usedInner.concat(expr.filter((e): e is Inner => typeof e === 'object')))]
+          let sqlBody = instance.getSqlBody({
+            order: info.order,
+            usedInner,
+          })
+          if (hasOneOf(sqlBody.state(), ['skip', 'take'])) {
+            sqlBody = sqlBody.bracket(usedInner)
+          }
           sqlBody.opts.order.unshift({
             order,
-            resolvable: (ctx) => segmentToStr(segment, (inner) => inner.resolvable(ctx)),
+            segment: expr.flatMap((e) => typeof e === 'string' ? e : e.segment),
           })
           return sqlBody
         },
@@ -262,14 +302,14 @@ export class SqlView<VT1 extends SqlViewTemplate> {
 
   take = (count: number | null | undefined | false): SqlView<VT1> => {
     if (typeof count !== 'number') { return this }
-    return new SqlView(() => {
-      const buildCtx = this.createBuildCtx()
+    return new SqlView((init) => {
+      const instance = this.getInstance(init)
       return {
-        template: buildCtx.template,
-        analysis: (ctx) => {
-          const sqlBody = buildCtx.analysis({
+        template: instance.template,
+        getSqlBody: (ctx) => {
+          const sqlBody = instance.getSqlBody({
             order: true,
-            usedColumn: ctx.usedColumn,
+            usedInner: ctx.usedInner,
           })
           sqlBody.opts.take = sqlBody.opts.take === null ? count : Math.min(sqlBody.opts.take, count)
           return sqlBody
@@ -279,25 +319,23 @@ export class SqlView<VT1 extends SqlViewTemplate> {
   }
 
   skip = (count: number | null | undefined | false): SqlView<VT1> => {
-    if (typeof count !== 'number') { return this }
-    return new SqlView(() => {
-      const buildCtx = this.createBuildCtx()
+    if (typeof count !== 'number' || count <= 0) { return this }
+    return new SqlView((init) => {
+      const instance = this
+        .bracketIf(({ state }) => hasOneOf(state, ['take']))
+        .getInstance(init)
       return {
-        template: buildCtx.template,
-        analysis: (ctx) => {
-          const sqlBody = buildCtx.analysis({
+        template: instance.template,
+        getSqlBody: (ctx) => {
+          const sqlBody = instance.getSqlBody({
             order: true,
-            usedColumn: ctx.usedColumn,
-          }).bracketIf(ctx.usedColumn, ({ state }) => hasOneOf(state, ['take']))
+            usedInner: ctx.usedInner,
+          })
           sqlBody.opts.skip = sqlBody.opts.skip + count
           sqlBody.opts.take = sqlBody.opts.take === null ? null : Math.max(0, sqlBody.opts.take - count)
           return sqlBody
         },
       }
     })
-  }
-
-  static createBuildCtx<VT1 extends SqlViewTemplate>(view: SqlView<VT1>) {
-    return view.createBuildCtx()
   }
 };

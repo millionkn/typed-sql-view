@@ -1,18 +1,18 @@
+import { Column, GetColumnHolder, SqlViewTemplate } from "./define.js";
 import { RawSqlCreator } from "./rawSqlCreator.js";
 import { SqlView } from "./sqlView.js";
-import { Column, GetRefStr, SqlViewTemplate } from "./tools.js";
 
-export class SqlExecutor {
+export class SqlExecutor<P> {
   constructor(
     private opts: {
-      creator: RawSqlCreator,
-      runner: (sql: string, params: unknown[]) => Promise<{ [key: string]: unknown }[]>
+      creator: RawSqlCreator<P>,
+      runner: (sql: string, params: P) => Promise<{ [key: string]: unknown }[]>
     }
   ) { }
 
   async selectAll<VT extends { [key: string]: Column<boolean, {} | null> }>(view: SqlView<VT>) {
     const rawSql = this.opts.creator.selectAll(view)
-    return this.opts.runner(rawSql.sql, rawSql.params).then((arr) => arr.map((raw) => rawSql.rawFormatter(raw)))
+    return this.opts.runner(rawSql.sql, rawSql.param).then((arr) => arr.map((raw) => rawSql.rawFormatter(raw)))
   }
 
   async selectOne<VT extends { [key: string]: Column<boolean, {} | null> }>(view: SqlView<VT>) {
@@ -21,10 +21,10 @@ export class SqlExecutor {
 
   async aggrateView<VT1 extends SqlViewTemplate, VT2 extends { [key: string]: Column<boolean, {} | null> }>(
     view: SqlView<VT1>,
-    getTemplate: (expr: (target: (ref: GetRefStr<VT1>) => string) => Column<boolean, unknown>) => VT2,
+    getTemplate: (expr: (target: (ref: GetColumnHolder<VT1>) => string) => Column<boolean, unknown>) => VT2,
   ) {
     const rawSelect = this.opts.creator.aggrateView(view, getTemplate)
-    return this.opts.runner(rawSelect.sql, rawSelect.params).then(([raw]) => {
+    return this.opts.runner(rawSelect.sql, rawSelect.param).then(([raw]) => {
       if (!raw) { throw new Error('aggrate no result') }
       return rawSelect.rawFormatter(raw)
     })

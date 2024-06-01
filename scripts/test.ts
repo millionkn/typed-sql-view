@@ -1,16 +1,16 @@
-import { RawSqlCreator, SqlExecutor, createFromDefine } from '../src/index.js'
+import { Adapter, RawSqlCreator, SqlExecutor, createFromDefine } from '../src/index.js'
 import z from 'zod'
 
 const companyTableDefine = createFromDefine(`"public"."tableName1"`, (define) => {
   return {
-    companyId: define((alias) => `"${alias}"."column_a"`).assert(null, 'companyId').withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
+    companyId: define((alias) => `"${alias}"."column_a"`).assert('', 'companyId').withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
     companyType: define((alias) => `"${alias}"."column_b"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
     name: define((alias) => `"${alias}"."column_c"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
   }
 })
 
 const personTableDefine = createFromDefine(`"public"."tableName2"`, (define) => {
-  const companyId = define((alias) => `"${alias}"."column_a"`).assert(null, `companyId`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw))
+  const companyId = define((alias) => `"${alias}"."column_a"`).assert('', `companyId`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw))
   const identify = define((alias) => `"${alias}"."column_b"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw))
   return {
     companyId,
@@ -58,11 +58,24 @@ const view = personTableDefine
   })
 
 //适配postgres
-const creator = new RawSqlCreator({
-  paramHolder: (index) => `$${index + 1}`,
-  skip: 'offset',
-  take: 'limit',
-})
+// creator = new RawSqlCreator(Adapter.postgresAdapter)
+const creator = new RawSqlCreator(new Adapter({
+  language: {
+    skip: 'offset',
+    take: 'limit',
+  },
+  createParamCtx: () => {
+    const result: unknown[] = []
+    return {
+      getParamResult: () => result,
+      setParam: (value, index) => {
+        result.push(value)
+        return { holder: `$${index + 1}` }
+      },
+    }
+  },
+
+}))
 
 
 /** 
@@ -93,12 +106,8 @@ console.log(creator.selectAll(view.mapTo((e) => ({
 
 
 const executor = new SqlExecutor({
-  //适配mysql
-  creator: new RawSqlCreator({
-    paramHolder: (index) => `:param${index}`,
-    skip: 'skip',
-    take: 'take',
-  }),
+  //适配mysql,也可自行实现
+  creator: new RawSqlCreator(Adapter.mysqlAdapter),
   runner: async (sql, params) => {
     console.log({ sql, params })
     // 使用其他工具进行query
@@ -145,9 +154,9 @@ executor.selectAll(view.mapTo((e) => ({
 
 console.log(createFromDefine(`"public"."tableName3"`, (define) => {
   return {
-    id: define((alias) => `"${alias}"."column_a"`).assert(null, 'companyId').withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
+    id: define((alias) => `"${alias}"."column_a"`).assert('', 'companyId').withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
     name: define((alias) => `"${alias}"."column_b"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
-    targetArr: define((alias) => `"${alias}"."column_c"`).withNull(false).assert(null, 'str split by ","'),
+    targetArr: define((alias) => `"${alias}"."column_c"`).withNull(false).assert('', 'str split by ","'),
   }
 }).forceMapTo((e, c) => {
   return {
@@ -158,9 +167,5 @@ console.log(createFromDefine(`"public"."tableName3"`, (define) => {
 })
   .andWhere(({ ref, param }) => `${ref((e) => e.target)} = ${param('zzz')}`)
   .pipe((view) => {
-    return new RawSqlCreator({
-      paramHolder: (index) => `$${index + 1}`,
-      skip: 'offset',
-      take: 'limit',
-    }).selectAll(view)
+    return new RawSqlCreator(Adapter.postgresAdapter).selectAll(view)
   })) 

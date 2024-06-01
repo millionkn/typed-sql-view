@@ -1,64 +1,85 @@
-import { Resolvable, SqlState, SqlContext, exec, Column, InnerColumn } from "./tools.js"
+import { exec } from "./private.js"
+import { AliasSym, Segment, SqlState, Inner, BuildContext, InitContext } from './define.js'
+import { resolveSqlStr } from "./tools.js"
+
+class SegmentResolver {
+  constructor(
+    private fallback: (aliasSym: AliasSym) => string,
+  ) { }
+  private saved = new Map<AliasSym, string>()
+  register = (aliasSym: AliasSym, str: string) => {
+    this.saved.set(aliasSym, str)
+  }
+  resolveSym = (aliasSym: AliasSym) => {
+    return this.saved.get(aliasSym) ?? this.fallback(aliasSym)
+  }
+  resolveSegment = (segment: Segment) => {
+    return segment.map((e) => typeof e === 'string' ? e : this.resolveSym(e)).join('')
+  }
+}
 
 export class SqlBody {
-  constructor(public opts: {
-    from: {
-      aliasSym: object,
-      resolvable: Resolvable,
-    },
-    join: {
-      type: 'left' | 'inner',
-      aliasSym: object,
-      resolvable: Resolvable,
-      condation: Resolvable,
-    }[],
-    where: Resolvable[],
-    groupBy: Resolvable[],
-    having: Resolvable[],
-    order: {
-      order: 'asc' | 'desc',
-      resolvable: Resolvable,
-    }[],
-    take: null | number,
-    skip: number,
-  }) { }
+  constructor(
+    private initCtx: InitContext,
+    public opts: {
+      from: {
+        aliasSym: AliasSym,
+        segment: Segment,
+      },
+      join: {
+        type: 'left' | 'inner',
+        aliasSym: AliasSym,
+        segment: Segment,
+        condation: Segment,
+      }[],
+      where: Segment[],
+      groupBy: Segment[],
+      having: Segment[],
+      order: {
+        order: 'asc' | 'desc',
+        segment: Segment,
+      }[],
+      take: null | number,
+      skip: number,
+    }) { }
 
-  private state() {
+  public state() {
     const base = this.opts
-    const stateArr: SqlState[] = []
-    if (base.join.some((e) => e.type === 'inner')) { stateArr.push('innerJoin') }
-    if (base.join.some((e) => e.type === 'left')) { stateArr.push('leftJoin') }
-    if (base.where && base.where.length > 0) { stateArr.push('where') }
-    if (base.groupBy && base.groupBy.length > 0) { stateArr.push('groupBy') }
-    if (base.having && base.having.length > 0) { stateArr.push('having') }
-    if (base.order && base.order.length > 0) { stateArr.push('order') }
-    if ((base.skip ?? 0) > 0) { stateArr.push('skip') }
-    if (base.take !== null) { stateArr.push('take') }
-    return stateArr
+    const state = new Set<SqlState>()
+    if (base.join.some((e) => e.type === 'inner')) { state.add('innerJoin') }
+    if (base.join.some((e) => e.type === 'left')) { state.add('leftJoin') }
+    if (base.where && base.where.length > 0) { state.add('where') }
+    if (base.groupBy && base.groupBy.length > 0) { state.add('groupBy') }
+    if (base.having && base.having.length > 0) { state.add('having') }
+    if (base.order && base.order.length > 0) { state.add('order') }
+    if ((base.skip ?? 0) > 0) { state.add('skip') }
+    if (base.take !== null) { state.add('take') }
+    return state
   }
 
-  bracketIf(usedColumn: InnerColumn[], condation: (opt: { state: SqlState[] }) => boolean) {
-    if (!condation({ state: this.state() })) { return this }
-    const usedColumnInfo = [...new Set(usedColumn)].map((inner, index) => {
-      const temp = inner.resolvable
-      const alias = `value_${index}`
-      inner.resolvable = (ctx) => `"${ctx.resolveSym(aliasSym)}"."${alias}"`
-      return { inner, temp, alias }
-    })
-    const aliasSym = {}
-    return new SqlBody({
+  bracket(usedInner: Inner[]) {
+    const aliasSym: AliasSym = {}
+    return new SqlBody(this.initCtx, {
       from: {
         aliasSym,
-        resolvable: (ctx) => {
-          const cbArr = usedColumnInfo.map(({ inner, temp }) => {
-            const current = inner.resolvable
-            inner.resolvable = temp
-            return () => inner.resolvable = current
+        segment: exec(() => {
+          const usedInnerInfo = [...new Set(usedInner)].map((inner, index) => {
+            const temp = inner.segment
+            const alias = `value_${index}`
+            inner.segment = resolveSqlStr((holder) => `"${holder(aliasSym)}"."${alias}"`);
+            return { inner, temp, alias }
           })
-          const result = `(${this.build(new Map(usedColumnInfo.map((e) => [e.temp, e.alias])), ctx)})`
+          const cbArr = usedInnerInfo.map(({ inner, temp }) => {
+            const current = inner.segment
+            inner.segment = temp
+            return () => inner.segment = current
+          })
+          const result = resolveSqlStr((holder) => `(${this.build(new Map(usedInnerInfo.map((e) => [e.inner.segment, e.alias])), {
+            resolveAliasSym: holder,
+          })})`)
           cbArr.forEach((cb) => cb())
           return result
-        },
+        }),
       },
       join: [],
       where: [],
@@ -70,55 +91,51 @@ export class SqlBody {
     })
   }
 
-  build(select: Map<Resolvable, string>, ctx: SqlContext) {
-    const ctxAliasMapper = new Map<object, string>()
+  build(select: Map<Segment, string>, ctx: BuildContext) {
+    const resolver = new SegmentResolver(ctx.resolveAliasSym)
     let bodyArr: string[] = []
-    const resolveSym = (sym: object) => ctxAliasMapper.get(sym) ?? ctx.resolveSym(sym)
-
     exec(() => {
       if (!this.opts.from) { return }
-      const tableAlias = ctx.genTableAlias()
-      const exprStr = this.opts.from.resolvable(ctx)
-      bodyArr.push(`${exprStr} as "${tableAlias}"`)
-      ctxAliasMapper.set(this.opts.from.aliasSym, tableAlias)
+      const tableAlias = this.initCtx.genTableAlias()
+      bodyArr.push(`${resolver.resolveSegment(this.opts.from.segment)} as "${tableAlias}"`)
+      resolver.register(this.opts.from.aliasSym, tableAlias)
     })
     this.opts.join.forEach((join) => {
-      const tableAlias = ctx.genTableAlias()
-      const body = join.resolvable(ctx)
+      const tableAlias = this.initCtx.genTableAlias()
+      const body = resolver.resolveSegment(join.segment)
       const str1 = `${join.type} join ${body} as "${tableAlias}"`
-      ctxAliasMapper.set(join.aliasSym, tableAlias)
-      const str2 = `on ${join.condation({ ...ctx, resolveSym })}`
-      bodyArr.push(`${str1} ${str2}`)
+      resolver.register(join.aliasSym, tableAlias)
+      bodyArr.push(`${str1} on ${resolver.resolveSegment(join.condation)}`)
     })
     exec(() => {
       if (this.opts.where.length === 0) { return }
       bodyArr.push(`where`)
-      bodyArr.push(this.opts.where.map((segment) => segment({ ...ctx, resolveSym })).filter((v) => v.length !== 0).join(' and '))
+      bodyArr.push(this.opts.where.map(resolver.resolveSegment).filter((v) => v.length !== 0).join(' and '))
     })
     exec(() => {
       if (this.opts.groupBy.length === 0) { return }
       bodyArr.push(`group by`)
-      bodyArr.push(this.opts.groupBy.map((segment) => segment({ ...ctx, resolveSym })).join(','))
+      bodyArr.push(this.opts.groupBy.map(resolver.resolveSegment).join(','))
     })
     exec(() => {
       if (this.opts.having.length === 0) { return }
       bodyArr.push(`having`)
-      bodyArr.push(this.opts.having.map((segment) => segment({ ...ctx, resolveSym })).filter((v) => v.length !== 0).join(' and '))
+      bodyArr.push(this.opts.having.map(resolver.resolveSegment).filter((v) => v.length !== 0).join(' and '))
     })
     exec(() => {
       if (this.opts.order.length === 0) { return }
       bodyArr.push(`order by`)
-      bodyArr.push(this.opts.order.map(({ resolvable: segment, order }) => `${segment({ ...ctx, resolveSym })} ${order}`).join(','))
+      bodyArr.push(this.opts.order.map(({ segment, order }) => `${resolver.resolveSegment(segment)} ${order}`).join(','))
     })
     if (this.opts.skip) {
-      bodyArr.push(`${ctx.sym.skip} ${this.opts.skip}`)
+      bodyArr.push(`${this.initCtx.language.skip} ${this.opts.skip}`)
     }
     if (this.opts.take !== null) {
-      bodyArr.push(`${ctx.sym.take} ${this.opts.take}`)
+      bodyArr.push(`${this.initCtx.language.take} ${this.opts.take}`)
     }
-    const fromBody = bodyArr.join(' ')
+    const fromBody = bodyArr.join(' ').trim()
     const selectTarget = select.size === 0 ? '1' : [...select.entries()]
-      .map(([resolvable, alias]) => `${resolvable({ ...ctx, resolveSym })} as "${alias}"`)
+      .map(([segment, alias]) => `${resolver.resolveSegment(segment)} as "${alias}"`)
       .join(',')
     if (fromBody.length === 0) {
       return `select ${selectTarget}`
