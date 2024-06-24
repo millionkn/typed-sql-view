@@ -74,7 +74,7 @@ export class SqlBody {
             inner.segment = temp
             return () => inner.segment = current
           })
-          const result = resolveSqlStr((holder) => `(${this.build(new Map(usedInnerInfo.map((e) => [e.inner.segment, e.alias])), {
+          const result = resolveSqlStr<AliasSym>((holder) => `(${this.build(new Map(usedInnerInfo.map((e) => [e.inner.segment, e.alias])), {
             resolveAliasSym: holder,
           })})`)
           cbArr.forEach((cb) => cb())

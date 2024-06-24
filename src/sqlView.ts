@@ -187,7 +187,7 @@ export class SqlView<VT1 extends SqlViewTemplate> {
             lazy: () => hasOneOf(extraBody.state(), ['innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take']),
             left: () => hasOneOf(extraBody.state(), ['innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take']),
             inner: () => hasOneOf(extraBody.state(), ['leftJoin', 'innerJoin', 'groupBy', 'having', 'order', 'skip', 'take']),
-          }) && extraBody.bracket(extraUsedInner)
+          }) && (extraBody = extraBody.bracket(extraUsedInner))
           return new SqlBody(init, {
             from: baseBody.opts.from,
             join: [

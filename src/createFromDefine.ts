@@ -1,4 +1,4 @@
-import { Column, SqlViewTemplate } from "./define.js";
+import { AliasSym, Column, SqlViewTemplate } from "./define.js";
 import { privateSym } from "./private.js";
 import { SqlBody } from "./sqlBody.js";
 import { ColumnDeclareFun, SqlView } from "./sqlView.js";
@@ -9,7 +9,7 @@ export function createFromDefine<const VT extends SqlViewTemplate>(
   getTemplate: (define: ColumnDeclareFun<string>) => VT
 ) {
   return new SqlView((init) => {
-    const sym = {}
+    const sym: AliasSym = {}
     const template = getTemplate((columnExpr) => Column[privateSym]({
       [privateSym]: 'inner',
       segment: resolveSqlStr((holder) => columnExpr(holder(sym)))
