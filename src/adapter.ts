@@ -1,8 +1,6 @@
 import { Column, GetColumnHolder, Inner, SqlViewTemplate } from "./define.js"
 import { SqlView } from "./sqlView.js"
-import { exec, hasOneOf, privateSym } from './private.js'
-import { resolveSqlStr } from "./tools.js"
-
+import { exec, hasOneOf } from './private.js'
 
 export class Adapter<PC = unknown> {
   static mysqlAdapter = new Adapter({
@@ -75,21 +73,6 @@ export class Adapter<PC = unknown> {
       language: this.opts.language,
       genTableAlias,
       setParam: (v) => param.set(v),
-      createColumnHelper: () => {
-        const saved = new Map<Inner, Inner[]>()
-        return {
-          getDeps: (inner) => saved.get(inner) ?? null,
-          createColumn: (getExpr) => {
-            const expr = resolveSqlStr<Inner>((holder) => getExpr((inner) => holder(inner)))
-            const inner: Inner = {
-              [privateSym]: 'inner',
-              segment: expr.flatMap((e) => typeof e === 'string' ? e : e.segment)
-            }
-            saved.set(inner, [...new Set(expr.flatMap((e) => typeof e === 'string' ? [] : saved.get(e) ?? e))])
-            return Column[privateSym](inner)
-          },
-        }
-      },
     })
     const selectTemplate = instance.template
     const mapper2 = new Map<Inner, string>()

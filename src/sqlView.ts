@@ -1,5 +1,5 @@
-import { AliasSym, AnalysisResult, BuildContext, Column, DefaultColumnType, GetColumnHolder, InitContext, Inner, Relation, Segment, SqlState, SqlViewTemplate } from "./define.js"
-import { exec, hasOneOf, pickConfig } from "./private.js"
+import { AliasSym, AnalysisResult, Column, DefaultColumnType, GetColumnHolder, InitContext, Inner, Relation, SqlState, SqlViewTemplate } from "./define.js"
+import { exec, hasOneOf, pickConfig, privateSym } from "./private.js"
 import { SqlBody } from "./sqlBody.js"
 import { flatViewTemplate, resolveSqlStr } from "./tools.js"
 
@@ -218,7 +218,21 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
   mapTo<const VT extends SqlViewTemplate>(getTemplate: (e: VT1, define: ColumnDeclareFun<(c: Column) => string>) => VT): SqlView<VT> {
     return new SqlView((init) => {
       const instance = this.getInstance(init)
-      const columnHelper = init.createColumnHelper()
+      const columnHelper = exec(() => {
+        const saved = new Map<Inner, Inner[]>()
+        return {
+          getDeps: (inner: Inner) => saved.get(inner) ?? null,
+          createColumn: (getExpr: (holder: (c: Inner) => string) => string) => {
+            const expr = resolveSqlStr<Inner>((holder) => getExpr((inner) => holder(inner)))
+            const inner: Inner = {
+              [privateSym]: 'inner',
+              segment: expr.flatMap((e) => typeof e === 'string' ? e : e.segment)
+            }
+            saved.set(inner, [...new Set(expr.flatMap((e) => typeof e === 'string' ? [] : saved.get(e) ?? e))])
+            return Column[privateSym](inner)
+          },
+        }
+      },)
       return {
         template: getTemplate(instance.template, (cr) => columnHelper.createColumn((ir) => cr((c) => ir(c.opts.inner)))),
         getSqlBody: (info) => {

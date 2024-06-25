@@ -70,12 +70,6 @@ export type AnalysisResult = {
 }
 
 export type InitContext = {
-  createColumnHelper: () => {
-    createColumn: (
-      getExpr: (holder: (c: Inner) => string) => string
-    ) => DefaultColumnType
-    getDeps: (inner: Inner) => Inner[] | null,
-  },
   language: {
     skip: string,
     take: string,
