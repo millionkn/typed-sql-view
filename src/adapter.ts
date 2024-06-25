@@ -3,6 +3,7 @@ import { SqlView } from "./sqlView.js"
 import { exec, hasOneOf, privateSym } from './private.js'
 import { resolveSqlStr } from "./tools.js"
 
+
 export class Adapter<PC = unknown> {
   static mysqlAdapter = new Adapter({
     language: {
@@ -38,21 +39,17 @@ export class Adapter<PC = unknown> {
     },
   })
 
-  constructor(public opts: {
-    createParamCtx: () => {
-      getParamResult: () => PC,
-      setParam: (value: unknown, index: number) => { holder: string }
-    },
-    language: {
-      skip: 'skip' | 'offset',
-      take: 'take' | 'limit',
-    }
-  }) { }
-}
-
-export class RawSqlCreator<P> {
   constructor(
-    private adapter: Adapter<P>
+    private opts: {
+      createParamCtx: () => {
+        getParamResult: () => PC,
+        setParam: (value: unknown, index: number) => { holder: string }
+      }
+      language: {
+        skip: 'skip' | 'offset',
+        take: 'take' | 'limit',
+      }
+    }
   ) { }
 
   private rawSelectAll<VT extends { [key: string]: Column<boolean, {} | null> }>(
@@ -63,7 +60,7 @@ export class RawSqlCreator<P> {
   ) {
     const param = exec(() => {
       let index = 0
-      const paramCtx = this.adapter.opts.createParamCtx()
+      const paramCtx = this.opts.createParamCtx()
       return {
         getResult: () => paramCtx.getParamResult(),
         set: (v: any) => paramCtx.setParam(v, index++).holder
@@ -75,7 +72,7 @@ export class RawSqlCreator<P> {
     })
 
     const instance = view.getInstance({
-      language: this.adapter.opts.language,
+      language: this.opts.language,
       genTableAlias,
       setParam: (v) => param.set(v),
       createColumnHelper: () => {

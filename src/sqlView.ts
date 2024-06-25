@@ -10,7 +10,7 @@ export type SqlViewInstance<VT extends SqlViewTemplate> = {
 
 export type ColumnDeclareFun<T> = (columnExpr: (input: T) => string) => DefaultColumnType
 
-export class SqlView<VT1 extends SqlViewTemplate> {
+export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
   constructor(
     public getInstance: (init: InitContext) => SqlViewInstance<VT1>,
   ) { }
@@ -20,8 +20,7 @@ export class SqlView<VT1 extends SqlViewTemplate> {
   andWhere = (getCondationStr: (tools: {
     ref: GetColumnHolder<VT1>,
     param: (value: any) => string,
-    buildCtx: BuildContext,
-    getInstance: <VT extends SqlViewTemplate>(view: SqlView<VT>) => SqlViewInstance<VT>,
+    select1From: (view: SqlView) => string,
   }) => null | false | undefined | string): SqlView<VT1> => {
     return new SqlView((initCtx) => {
       const instance = this.getInstance(initCtx)
@@ -34,10 +33,12 @@ export class SqlView<VT1 extends SqlViewTemplate> {
         const str = getCondationStr({
           ref: (ref) => holder({ type: 'inner', inner: ref(instance.template).opts.inner }),
           param: initCtx.setParam,
-          getInstance: (view) => view.getInstance(initCtx),
-          buildCtx: {
-            resolveAliasSym: (aliasSym) => holder({ type: 'aliasSym', aliasSym })
-          }
+          select1From: (view) => view
+            .getInstance(initCtx)
+            .getSqlBody({ order: false, usedInner: [] })
+            .build(new Map(), {
+              resolveAliasSym: (aliasSym) => holder({ type: 'aliasSym', aliasSym })
+            }),
         })
         return typeof str !== 'string' ? '' : str.trim()
       })
@@ -103,8 +104,6 @@ export class SqlView<VT1 extends SqlViewTemplate> {
         }
       }))
   }
-
-
 
   join<
     M extends 'left' | 'inner' | 'lazy',

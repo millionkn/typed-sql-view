@@ -1,4 +1,4 @@
-import { Adapter, RawSqlCreator, SqlExecutor, createFromDefine } from '../src/index.js'
+import { Adapter, SqlExecutor, createFromDefine } from '../src/index.js'
 import z from 'zod'
 
 const companyTableDefine = createFromDefine(`"public"."tableName1"`, (define) => {
@@ -58,8 +58,8 @@ const view = personTableDefine
   })
 
 //适配postgres
-// creator = new RawSqlCreator(Adapter.postgresAdapter)
-const creator = new RawSqlCreator(new Adapter({
+// adapter = Adapter.postgresAdapter
+const adapter = new Adapter({
   language: {
     skip: 'offset',
     take: 'limit',
@@ -75,7 +75,7 @@ const creator = new RawSqlCreator(new Adapter({
     }
   },
 
-}))
+})
 
 
 /** 
@@ -85,7 +85,7 @@ const creator = new RawSqlCreator(new Adapter({
   rawFormatter: [Function: rawFormatter]
 }
 */
-console.log(creator.selectAll(view.mapTo((e) => ({
+console.log(adapter.selectAll(view.mapTo((e) => ({
   ...e.base
 }))))
 
@@ -97,7 +97,7 @@ console.log(creator.selectAll(view.mapTo((e) => ({
   rawFormatter: [Function: rawFormatter]
 }
  */
-console.log(creator.selectAll(view.mapTo((e) => ({
+console.log(adapter.selectAll(view.mapTo((e) => ({
   companyName: e.base.name,
   companyType: e.base.companyType,
   maxScore: e.extra.maxScore.format((v) => Number(v)),
@@ -107,7 +107,7 @@ console.log(creator.selectAll(view.mapTo((e) => ({
 
 const executor = new SqlExecutor({
   //适配mysql,也可自行实现
-  creator: new RawSqlCreator(Adapter.mysqlAdapter),
+  adapter: Adapter.mysqlAdapter,
   runner: async (sql, params) => {
     console.log({ sql, params })
     // 使用其他工具进行query
@@ -167,5 +167,5 @@ console.log(createFromDefine(`"public"."tableName3"`, (define) => {
 })
   .andWhere(({ ref, param }) => `${ref((e) => e.target)} = ${param('zzz')}`)
   .pipe((view) => {
-    return new RawSqlCreator(Adapter.postgresAdapter).selectAll(view)
+    return Adapter.postgresAdapter.selectAll(view)
   })) 
