@@ -1,7 +1,7 @@
 import { AliasSym, AnalysisResult, Column, DefaultColumnType, GetColumnHolder, InitContext, Inner, Relation, SqlState, SqlViewTemplate } from "./define.js"
-import { exec, hasOneOf, pickConfig, privateSym } from "./private.js"
+import { exec, hasOneOf, pickConfig } from "./private.js"
 import { SqlBody } from "./sqlBody.js"
-import { flatViewTemplate, resolveSqlStr } from "./tools.js"
+import { createColumnHelper, flatViewTemplate, resolveSqlStr } from "./tools.js"
 
 export type SqlViewInstance<VT extends SqlViewTemplate> = {
   template: VT,
@@ -77,32 +77,30 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
       define: ColumnDeclareFun<GetColumnHolder<VT1>>,
     ) => VT,
   ): SqlView<{ keys: K, content: VT }> => {
-    return this
-      .mapTo((template, define) => {
-        return {
-          keys: getKeyTemplate(template),
-          content: getValueTemplate((expr) => define((c) => expr((ref) => c(ref(template)))))
-        }
-      })
-      .pipe((view) => new SqlView((init) => {
-        const instance = view.getInstance(init)
-        return {
-          template: instance.template,
-          getSqlBody: (info) => {
-            const groupBy = [...new Set(flatViewTemplate(instance.template.keys).map((c) => c.opts.inner))]
-            const usedInner = [...new Set(info.usedInner.concat(groupBy))]
-            let sqlBody = instance.getSqlBody({
-              order: info.order,
-              usedInner,
-            })
-            if (hasOneOf(sqlBody.state(), ['order', 'groupBy', 'having', 'skip', 'take'])) {
-              sqlBody = sqlBody.bracket(usedInner)
-            }
-            sqlBody.opts.groupBy = groupBy.map((inner) => inner.segment)
-            return sqlBody
+    return new SqlView((init) => {
+      const columnHelper = createColumnHelper()
+      const instance = this.getInstance(init)
+      const keys = getKeyTemplate(instance.template)
+      const content = getValueTemplate((expr) => columnHelper.createColumn(
+        (holder) => expr((ref) => holder(ref(instance.template).opts.inner))
+      ))
+      return {
+        template: { keys, content },
+        getSqlBody: (info) => {
+          const groupBy = [...new Set(flatViewTemplate(keys).map((c) => c.opts.inner))]
+          const usedInner = [...new Set(info.usedInner.flatMap((inner) => columnHelper.getDeps(inner) ?? inner).concat(groupBy))]
+          let sqlBody = instance.getSqlBody({
+            order: info.order,
+            usedInner,
+          })
+          if (hasOneOf(sqlBody.state(), ['order', 'groupBy', 'having', 'skip', 'take'])) {
+            sqlBody = sqlBody.bracket(usedInner)
           }
+          sqlBody.opts.groupBy = groupBy.map((inner) => inner.segment)
+          return sqlBody
         }
-      }))
+      }
+    })
   }
 
   join<
@@ -218,21 +216,7 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
   mapTo<const VT extends SqlViewTemplate>(getTemplate: (e: VT1, define: ColumnDeclareFun<(c: Column) => string>) => VT): SqlView<VT> {
     return new SqlView((init) => {
       const instance = this.getInstance(init)
-      const columnHelper = exec(() => {
-        const saved = new Map<Inner, Inner[]>()
-        return {
-          getDeps: (inner: Inner) => saved.get(inner) ?? null,
-          createColumn: (getExpr: (holder: (c: Inner) => string) => string) => {
-            const expr = resolveSqlStr<Inner>((holder) => getExpr((inner) => holder(inner)))
-            const inner: Inner = {
-              [privateSym]: 'inner',
-              segment: expr.flatMap((e) => typeof e === 'string' ? e : e.segment)
-            }
-            saved.set(inner, [...new Set(expr.flatMap((e) => typeof e === 'string' ? [] : saved.get(e) ?? e))])
-            return Column[privateSym](inner)
-          },
-        }
-      },)
+      const columnHelper = createColumnHelper()
       return {
         template: getTemplate(instance.template, (cr) => columnHelper.createColumn((ir) => cr((c) => ir(c.opts.inner)))),
         getSqlBody: (info) => {
