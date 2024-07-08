@@ -16,7 +16,7 @@ class ColumnHelper {
     const expr = resolveSqlStr<Inner>((holder) => getExpr((inner) => holder(inner)))
     const inner: Inner = {
       [privateSym]: null,
-      segment: expr.flatMap((e) => typeof e === 'string' ? e : e.segment)
+      getStr: () => expr.flatMap((e) => typeof e === 'string' ? e : e.getStr()).join('')
     }
     this.saved.set(inner, [...new Set(expr.flatMap((e) => typeof e === 'string' ? [] : this.saved.get(e) ?? e))])
     return Column[privateSym](inner)
@@ -304,7 +304,7 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
           }
           sqlBody.opts.order.unshift({
             order,
-            segment: expr.flatMap((e) => typeof e === 'string' ? e : e.segment),
+            segment: ()=> expr.flatMap((e) => typeof e === 'string' ? e : e.getStr()).join(''),
           })
           return sqlBody
         },

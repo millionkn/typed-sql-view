@@ -1,17 +1,13 @@
 import { exec } from "./private.js"
-import { AliasSym, Segment, SqlState, Inner, BuildContext, InitContext } from './define.js'
+import { AliasSym, Segment, SqlState, Inner, BuildContext, InitContext, AsyncStr } from './define.js'
 import { resolveSqlStr } from "./tools.js"
 
 class SegmentResolver {
-  constructor(
-    private fallback: (aliasSym: AliasSym) => string,
-  ) { }
-  private saved = new Map<AliasSym, string>()
-  register = (aliasSym: AliasSym, str: string) => {
-    this.saved.set(aliasSym, str)
+  register = (aliasSym: AliasSym, alias: string) => {
+    aliasSym.getAlias = () => alias
   }
   resolveSym = (aliasSym: AliasSym) => {
-    return this.saved.get(aliasSym) ?? this.fallback(aliasSym)
+    return aliasSym.getAlias()
   }
   resolveSegment = (segment: Segment) => {
     return segment.map((e) => typeof e === 'string' ? e : this.resolveSym(e)).join('')
@@ -24,20 +20,20 @@ export class SqlBody {
     public opts: {
       from: {
         aliasSym: AliasSym,
-        segment: Segment,
+        getStr: AsyncStr,
       },
       join: {
         type: 'left' | 'inner',
         aliasSym: AliasSym,
-        segment: Segment,
+        getStr: AsyncStr,
         condation: Segment,
       }[],
-      where: Segment[],
-      groupBy: Segment[],
-      having: Segment[],
+      where: AsyncStr[],
+      groupBy: AsyncStr[],
+      having: AsyncStr[],
       order: {
         order: 'asc' | 'desc',
-        segment: Segment,
+        segment: AsyncStr,
       }[],
       take: null | number,
       skip: number,
@@ -58,27 +54,25 @@ export class SqlBody {
   }
 
   bracket(usedInner: Inner[]) {
-    const aliasSym: AliasSym = {}
+    const aliasSym = new AliasSym()
     return new SqlBody(this.initCtx, {
       from: {
         aliasSym,
-        segment: exec(() => {
+        getStr: exec(() => {
           const usedInnerInfo = [...new Set(usedInner)].map((inner, index) => {
-            const temp = inner.segment
+            const temp = inner.getStr
             const alias = `value_${index}`
-            inner.segment = resolveSqlStr((holder) => `"${holder(aliasSym)}"."${alias}"`);
+            inner.getStr = () => `"${aliasSym.getAlias()}"."${alias}"`
             return { inner, temp, alias }
           })
           const cbArr = usedInnerInfo.map(({ inner, temp }) => {
-            const current = inner.segment
-            inner.segment = temp
-            return () => inner.segment = current
+            const current = inner.getStr
+            inner.getStr = temp
+            return () => inner.getStr = current
           })
-          const result = resolveSqlStr<AliasSym>((holder) => `(${this.build(new Map(usedInnerInfo.map((e) => [e.inner, e.alias])), {
-            resolveAliasSym: holder,
-          })})`)
+          const result = `(${this.build(new Map(usedInnerInfo.map((e) => [e.inner, e.alias])))})`
           cbArr.forEach((cb) => cb())
-          return result
+          return [result]
         }),
       },
       join: [],
@@ -91,8 +85,8 @@ export class SqlBody {
     })
   }
 
-  build(select: Map<Inner, string>, ctx: BuildContext) {
-    const resolver = new SegmentResolver(ctx.resolveAliasSym)
+  build(select: Map<Inner, string>) {
+    const resolver = new SegmentResolver()
     let bodyArr: string[] = []
     exec(() => {
       if (!this.opts.from) { return }
@@ -135,7 +129,7 @@ export class SqlBody {
     }
     const fromBody = bodyArr.join(' ').trim()
     const selectTarget = select.size === 0 ? '1' : [...select.entries()]
-      .map(([inner, alias]) => `${resolver.resolveSegment(inner.segment)} as "${alias}"`)
+      .map(([inner, alias]) => `${inner.getStr()} as "${alias}"`)
       .join(',')
     if (fromBody.length === 0) {
       return `select ${selectTarget}`

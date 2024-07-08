@@ -2,17 +2,16 @@ import { AliasSym, Column, SqlViewTemplate } from "./define.js";
 import { privateSym } from "./private.js";
 import { SqlBody } from "./sqlBody.js";
 import { ColumnDeclareFun, SqlView } from "./sqlView.js";
-import { resolveSqlStr } from "./tools.js";
 
 export function createFromDefine<const VT extends SqlViewTemplate>(
   rawFrom: string,
   getTemplate: (define: ColumnDeclareFun<string>) => VT
 ) {
   return new SqlView((init) => {
-    const sym: AliasSym = {}
+    const sym = new AliasSym()
     const template = getTemplate((columnExpr) => Column[privateSym]({
       [privateSym]: null,
-      segment: resolveSqlStr((holder) => columnExpr(holder(sym)))
+      getStr: () => columnExpr(sym.getAlias()),
     }))
     return {
       template,
@@ -20,7 +19,7 @@ export function createFromDefine<const VT extends SqlViewTemplate>(
         return new SqlBody(init, {
           from: {
             aliasSym: sym,
-            segment: [rawFrom],
+            getStr: () => rawFrom,
           },
           join: [],
           where: [],

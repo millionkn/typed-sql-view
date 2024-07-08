@@ -1,14 +1,18 @@
 import { DeepTemplate, privateSym } from "./private.js"
 
-export type AliasSym = object | Object
+export class AliasSym {
+  getAlias = (): string => { throw new Error() }
+}
 
 export type Segment = Array<string | AliasSym>
+
+export type AsyncStr = () => string
 
 export type SqlState = 'leftJoin' | 'innerJoin' | 'where' | 'groupBy' | 'having' | 'take' | 'skip' | 'order'
 
 export type Inner = {
   [privateSym]: null
-  segment: Segment
+  getStr: AsyncStr
 }
 
 type ColumnOpts<N extends boolean = boolean, R = unknown, T extends string = string> = {
