@@ -1,18 +1,5 @@
 import { exec } from "./private.js"
-import { AliasSym, Segment, SqlState, Inner, BuildContext, InitContext, AsyncStr } from './define.js'
-import { resolveSqlStr } from "./tools.js"
-
-class SegmentResolver {
-  register = (aliasSym: AliasSym, alias: string) => {
-    aliasSym.getAlias = () => alias
-  }
-  resolveSym = (aliasSym: AliasSym) => {
-    return aliasSym.getAlias()
-  }
-  resolveSegment = (segment: Segment) => {
-    return segment.map((e) => typeof e === 'string' ? e : this.resolveSym(e)).join('')
-  }
-}
+import { AliasSym, Segment, SqlState, Inner, InitContext, AsyncStr } from './define.js'
 
 export class SqlBody {
   constructor(
@@ -20,20 +7,20 @@ export class SqlBody {
     public opts: {
       from: {
         aliasSym: AliasSym,
-        getStr: AsyncStr,
+        segment: Segment,
       },
       join: {
         type: 'left' | 'inner',
         aliasSym: AliasSym,
-        getStr: AsyncStr,
-        condation: Segment,
+        segment: Segment,
+        getCondation: AsyncStr,
       }[],
       where: AsyncStr[],
       groupBy: AsyncStr[],
       having: AsyncStr[],
       order: {
         order: 'asc' | 'desc',
-        segment: AsyncStr,
+        getStr: AsyncStr,
       }[],
       take: null | number,
       skip: number,
@@ -58,7 +45,7 @@ export class SqlBody {
     return new SqlBody(this.initCtx, {
       from: {
         aliasSym,
-        getStr: exec(() => {
+        segment: exec(() => {
           const usedInnerInfo = [...new Set(usedInner)].map((inner, index) => {
             const temp = inner.getStr
             const alias = `value_${index}`
@@ -86,48 +73,52 @@ export class SqlBody {
   }
 
   build(select: Map<Inner, string>) {
-    const resolver = new SegmentResolver()
-    let bodyArr: string[] = []
+    let buildResult: string[] = []
     exec(() => {
       if (!this.opts.from) { return }
       const tableAlias = this.initCtx.genTableAlias()
-      bodyArr.push(`${resolver.resolveSegment(this.opts.from.segment)} as "${tableAlias}"`)
-      resolver.register(this.opts.from.aliasSym, tableAlias)
+      const body = this.opts.from.segment
+        .map((e) => typeof e === 'string' ? e : e.getAlias())
+        .join('')
+      buildResult.push(`${body} as "${tableAlias}"`)
+      this.opts.from.aliasSym.getAlias = () => tableAlias
     })
     this.opts.join.forEach((join) => {
       const tableAlias = this.initCtx.genTableAlias()
-      const body = resolver.resolveSegment(join.segment)
+      const body = join.segment
+        .map((e) => typeof e === 'string' ? e : e.getAlias())
+        .join('')
       const str1 = `${join.type} join ${body} as "${tableAlias}"`
-      resolver.register(join.aliasSym, tableAlias)
-      bodyArr.push(`${str1} on ${resolver.resolveSegment(join.condation)}`)
+      join.aliasSym.getAlias = () => tableAlias
+      buildResult.push(`${str1} on ${join.getCondation()}`)
     })
     exec(() => {
       if (this.opts.where.length === 0) { return }
-      bodyArr.push(`where`)
-      bodyArr.push(this.opts.where.map(resolver.resolveSegment).filter((v) => v.length !== 0).join(' and '))
+      buildResult.push(`where`)
+      buildResult.push(this.opts.where.map((getStr) => getStr()).filter((v) => v.length !== 0).join(' and '))
     })
     exec(() => {
       if (this.opts.groupBy.length === 0) { return }
-      bodyArr.push(`group by`)
-      bodyArr.push(this.opts.groupBy.map(resolver.resolveSegment).join(','))
+      buildResult.push(`group by`)
+      buildResult.push(this.opts.groupBy.map((getStr) => getStr()).join(','))
     })
     exec(() => {
       if (this.opts.having.length === 0) { return }
-      bodyArr.push(`having`)
-      bodyArr.push(this.opts.having.map(resolver.resolveSegment).filter((v) => v.length !== 0).join(' and '))
+      buildResult.push(`having`)
+      buildResult.push(this.opts.having.map((getStr) => getStr()).filter((v) => v.length !== 0).join(' and '))
     })
     exec(() => {
       if (this.opts.order.length === 0) { return }
-      bodyArr.push(`order by`)
-      bodyArr.push(this.opts.order.map(({ segment, order }) => `${resolver.resolveSegment(segment)} ${order}`).join(','))
+      buildResult.push(`order by`)
+      buildResult.push(this.opts.order.map(({ getStr, order }) => `${getStr()} ${order}`).join(','))
     })
     if (this.opts.skip) {
-      bodyArr.push(`${this.initCtx.language.skip} ${this.opts.skip}`)
+      buildResult.push(`${this.initCtx.language.skip} ${this.opts.skip}`)
     }
     if (this.opts.take !== null) {
-      bodyArr.push(`${this.initCtx.language.take} ${this.opts.take}`)
+      buildResult.push(`${this.initCtx.language.take} ${this.opts.take}`)
     }
-    const fromBody = bodyArr.join(' ').trim()
+    const fromBody = buildResult.join(' ').trim()
     const selectTarget = select.size === 0 ? '1' : [...select.entries()]
       .map(([inner, alias]) => `${inner.getStr()} as "${alias}"`)
       .join(',')

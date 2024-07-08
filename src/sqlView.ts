@@ -51,13 +51,10 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
           select1From: (view) => view
             .getInstance(initCtx)
             .getSqlBody({ order: false, usedInner: [] })
-            .build(new Map(), {
-              resolveAliasSym: (aliasSym) => holder({ type: 'aliasSym', aliasSym })
-            }),
+            .build(new Map()),
         })
         return typeof str !== 'string' ? '' : str.trim()
       })
-      if (expr.length === 0) { return instance }
       return {
         template: instance.template,
         getSqlBody: (info) => {
@@ -72,14 +69,14 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
             sqlBody = sqlBody.bracket(usedInner)
           }
           const target = sqlBody.opts.groupBy.length === 0 ? sqlBody.opts.where : sqlBody.opts.having
-          target.push(expr.flatMap((e) => {
+          target.push(() => expr.flatMap((e) => {
             if (typeof e === 'string') { return e }
             if (e.type === 'aliasSym') {
               return e.aliasSym
             } else {
-              return e.inner.segment
+              return e.inner.getStr()
             }
-          }))
+          }).join(''))
           return sqlBody
         },
       }
@@ -111,7 +108,7 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
           if (hasOneOf(sqlBody.state(), ['order', 'groupBy', 'having', 'skip', 'take'])) {
             sqlBody = sqlBody.bracket(usedInner)
           }
-          sqlBody.opts.groupBy = groupBy.map((inner) => inner.segment)
+          sqlBody.opts.groupBy = groupBy.map((inner) => () => inner.getStr())
           return sqlBody
         }
       }
@@ -212,7 +209,7 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
                 }),
                 aliasSym: extraBody.opts.from.aliasSym,
                 segment: extraBody.opts.from.segment,
-                condation: sp.condationExpr.flatMap((e) => typeof e === 'string' ? e : e.segment),
+                getCondation: () => sp.condationExpr.flatMap((e) => typeof e === 'string' ? e : e.getStr()).join(''),
               },
               ...extraBody.opts.join ?? [],
             ],
@@ -304,7 +301,7 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
           }
           sqlBody.opts.order.unshift({
             order,
-            segment: ()=> expr.flatMap((e) => typeof e === 'string' ? e : e.getStr()).join(''),
+            getStr: () => expr.flatMap((e) => typeof e === 'string' ? e : e.getStr()).join(''),
           })
           return sqlBody
         },

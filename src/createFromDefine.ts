@@ -19,7 +19,7 @@ export function createFromDefine<const VT extends SqlViewTemplate>(
         return new SqlBody(init, {
           from: {
             aliasSym: sym,
-            getStr: () => rawFrom,
+            segment: [rawFrom],
           },
           join: [],
           where: [],
