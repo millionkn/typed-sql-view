@@ -74,7 +74,7 @@ export class SqlBody {
             inner.segment = temp
             return () => inner.segment = current
           })
-          const result = resolveSqlStr<AliasSym>((holder) => `(${this.build(new Map(usedInnerInfo.map((e) => [e.inner.segment, e.alias])), {
+          const result = resolveSqlStr<AliasSym>((holder) => `(${this.build(new Map(usedInnerInfo.map((e) => [e.inner, e.alias])), {
             resolveAliasSym: holder,
           })})`)
           cbArr.forEach((cb) => cb())
@@ -91,7 +91,7 @@ export class SqlBody {
     })
   }
 
-  build(select: Map<Segment, string>, ctx: BuildContext) {
+  build(select: Map<Inner, string>, ctx: BuildContext) {
     const resolver = new SegmentResolver(ctx.resolveAliasSym)
     let bodyArr: string[] = []
     exec(() => {
@@ -135,7 +135,7 @@ export class SqlBody {
     }
     const fromBody = bodyArr.join(' ').trim()
     const selectTarget = select.size === 0 ? '1' : [...select.entries()]
-      .map(([segment, alias]) => `${resolver.resolveSegment(segment)} as "${alias}"`)
+      .map(([inner, alias]) => `${resolver.resolveSegment(inner.segment)} as "${alias}"`)
       .join(',')
     if (fromBody.length === 0) {
       return `select ${selectTarget}`

@@ -89,10 +89,9 @@ export class Adapter<PC = unknown> {
       order: flags.order,
       usedInner: [...mapper2.keys()]
     })
-    const sql = sqlBody.build(
-      new Map([...mapper2.entries()].map(([inner, alias]) => [inner.segment, alias])),
-      { resolveAliasSym: () => { throw new Error() } },
-    )
+    const sql = sqlBody.build(mapper2, {
+      resolveAliasSym: () => { throw new Error() }
+    })
 
     return {
       sql,
