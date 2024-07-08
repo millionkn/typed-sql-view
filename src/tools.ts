@@ -1,5 +1,5 @@
-import { Column, Inner, SqlViewTemplate } from "./define.js"
-import { exec, privateSym } from "./private.js"
+import { Column, SqlViewTemplate } from "./define.js"
+import { exec } from "./private.js"
 
 export const resolveSqlStr = exec(() => {
   let _nsIndex = 0
@@ -31,20 +31,4 @@ function _flatViewTemplate(template: SqlViewTemplate): Column[] {
 
 export function flatViewTemplate(template: SqlViewTemplate) {
   return _flatViewTemplate(template)
-}
-
-export const createColumnHelper = () => {
-  const saved = new Map<Inner, Inner[]>()
-  return {
-    getDeps: (inner: Inner) => saved.get(inner) ?? null,
-    createColumn: (getExpr: (holder: (c: Inner) => string) => string) => {
-      const expr = resolveSqlStr<Inner>((holder) => getExpr((inner) => holder(inner)))
-      const inner: Inner = {
-        [privateSym]: 'inner',
-        segment: expr.flatMap((e) => typeof e === 'string' ? e : e.segment)
-      }
-      saved.set(inner, [...new Set(expr.flatMap((e) => typeof e === 'string' ? [] : saved.get(e) ?? e))])
-      return Column[privateSym](inner)
-    },
-  }
 }

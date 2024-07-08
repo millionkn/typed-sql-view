@@ -7,7 +7,7 @@ export type Segment = Array<string | AliasSym>
 export type SqlState = 'leftJoin' | 'innerJoin' | 'where' | 'groupBy' | 'having' | 'take' | 'skip' | 'order'
 
 export type Inner = {
-  [privateSym]: 'inner'
+  [privateSym]: null
   segment: Segment
 }
 

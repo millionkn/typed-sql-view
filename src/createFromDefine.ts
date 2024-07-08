@@ -11,7 +11,7 @@ export function createFromDefine<const VT extends SqlViewTemplate>(
   return new SqlView((init) => {
     const sym: AliasSym = {}
     const template = getTemplate((columnExpr) => Column[privateSym]({
-      [privateSym]: 'inner',
+      [privateSym]: null,
       segment: resolveSqlStr((holder) => columnExpr(holder(sym)))
     }))
     return {

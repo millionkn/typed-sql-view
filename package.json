@@ -7,8 +7,8 @@
   "scripts": {
     "prepublish": "pnpm run build",
     "build": "tsc",
-    "start": "cross-env TS_NODE_PROJECT=./tsconfig.test.json node --watch --loader ts-node/esm ./scripts/test.ts",
-    "start:debug": "cross-env TS_NODE_PROJECT=./tsconfig.test.json node --watch --loader ts-node/esm --inspect ./scripts/test.ts"
+    "start": "cross-env TS_NODE_PROJECT=./tsconfig.test.json node --watch --loader ts-node/esm ./scripts/test2.ts",
+    "start:debug": "cross-env TS_NODE_PROJECT=./tsconfig.test.json node --watch --loader ts-node/esm --inspect ./scripts/test2.ts"
   },
   "keywords": [],
   "author": "",
