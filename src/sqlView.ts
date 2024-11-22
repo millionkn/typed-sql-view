@@ -186,13 +186,13 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
           })
           let extraBody = sp.extra.instance.getSqlBody({
             usedInner: extraUsedInner,
-            order: pickConfig(mode satisfies "inner" | "left" | "lazy", {
+            order: pickConfig(mode satisfies 'inner' | 'left' | 'lazy', {
               'lazy': () => false,
               'left': () => info.order,
               'inner': () => info.order,
             }),
           })
-          pickConfig(mode satisfies "inner" | "left" | "lazy", {
+          pickConfig(mode satisfies 'inner' | 'left' | 'lazy', {
             lazy: () => hasOneOf(extraBody.state(), ['innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take']),
             left: () => hasOneOf(extraBody.state(), ['innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take']),
             inner: () => hasOneOf(extraBody.state(), ['leftJoin', 'innerJoin', 'groupBy', 'having', 'order', 'skip', 'take']),
@@ -202,7 +202,7 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
             join: [
               ...baseBody.opts.join ?? [],
               {
-                type: pickConfig(mode satisfies "inner" | "left" | "lazy", {
+                type: pickConfig(mode satisfies 'inner' | 'left' | 'lazy', {
                   left: () => 'left',
                   inner: () => 'inner',
                   lazy: () => 'left',

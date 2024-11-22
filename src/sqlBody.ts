@@ -49,7 +49,7 @@ export class SqlBody {
           const usedInnerInfo = [...new Set(usedInner)].map((inner, index) => {
             const temp = inner.getStr
             const alias = `value_${index}`
-            inner.getStr = () => `"${aliasSym.getAlias()}"."${alias}"`
+            inner.getStr = () => `${aliasSym.getAlias()}.${alias}`
             return { inner, temp, alias }
           })
           const cbArr = usedInnerInfo.map(({ inner, temp }) => {
@@ -80,7 +80,7 @@ export class SqlBody {
       const body = this.opts.from.segment
         .map((e) => typeof e === 'string' ? e : e.getAlias())
         .join('')
-      buildResult.push(`${body} as "${tableAlias}"`)
+      buildResult.push(`${body} as ${tableAlias}`)
       this.opts.from.aliasSym.getAlias = () => tableAlias
     })
     this.opts.join.forEach((join) => {
@@ -88,7 +88,7 @@ export class SqlBody {
       const body = join.segment
         .map((e) => typeof e === 'string' ? e : e.getAlias())
         .join('')
-      const str1 = `${join.type} join ${body} as "${tableAlias}"`
+      const str1 = `${join.type} join ${body} as ${tableAlias}`
       join.aliasSym.getAlias = () => tableAlias
       buildResult.push(`${str1} on ${join.getCondation()}`)
     })
@@ -120,7 +120,7 @@ export class SqlBody {
     }
     const fromBody = buildResult.join(' ').trim()
     const selectTarget = select.size === 0 ? '1' : [...select.entries()]
-      .map(([inner, alias]) => `${inner.getStr()} as "${alias}"`)
+      .map(([inner, alias]) => `${inner.getStr()} as ${alias}`)
       .join(',')
     if (fromBody.length === 0) {
       return `select ${selectTarget}`
