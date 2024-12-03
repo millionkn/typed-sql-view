@@ -100,3 +100,11 @@ export type Relation<N extends boolean, VT extends SqlViewTemplate> = N extends 
   : VT extends Column<infer N2, infer X, infer T> ? Column<(N2 & N) extends true ? true : boolean, X, T>
   : _Relation<N, Extract<VT, readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }>>
 
+
+export type SelectResult<VT extends SqlViewTemplate> = VT extends readonly [] ? []
+  : VT extends readonly [infer X extends SqlViewTemplate, ...infer Arr extends readonly SqlViewTemplate[]]
+  ? [SelectResult<X>, ...SelectResult<Arr>]
+  : VT extends Column<infer X, infer Y>
+  ? (true extends X ? null : never) | Y
+  : VT extends { [key: string]: SqlViewTemplate }
+  ? { -readonly [key in keyof VT]: SelectResult<VT[key]> } : never

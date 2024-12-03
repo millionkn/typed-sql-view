@@ -10,16 +10,16 @@ export class SqlExecutor<P> {
     }
   ) { }
 
-  async selectAll<VT extends { [key: string]: Column<boolean, {} | null> }>(view: SqlView<VT>) {
+  async selectAll<VT extends SqlViewTemplate>(view: SqlView<VT>) {
     const rawSql = this.opts.adapter.selectAll(view)
     return this.opts.runner(rawSql.sql, rawSql.param).then((arr) => arr.map((raw) => rawSql.rawFormatter(raw)))
   }
 
-  async selectOne<VT extends { [key: string]: Column<boolean, {} | null> }>(view: SqlView<VT>) {
+  async selectOne<VT extends SqlViewTemplate>(view: SqlView<VT>) {
     return this.selectAll(view.take(1)).then((arr) => arr.at(0) ?? null)
   }
 
-  async aggrateView<VT1 extends SqlViewTemplate, VT2 extends { [key: string]: Column<boolean, {} | null> }>(
+  async aggrateView<VT1 extends SqlViewTemplate, VT2 extends SqlViewTemplate>(
     view: SqlView<VT1>,
     getTemplate: (expr: (target: (ref: GetColumnHolder<VT1>) => string) => Column<boolean, unknown>) => VT2,
   ) {
@@ -36,7 +36,7 @@ export class SqlExecutor<P> {
     }).then((e) => e.count)
   }
 
-  async query<VT extends { [key: string]: Column<boolean, {} | null> }>(withCount: boolean, page: null | { take: number, skip: number }, view: SqlView<VT>) {
+  async query<VT extends SqlViewTemplate>(withCount: boolean, page: null | { take: number, skip: number }, view: SqlView<VT>) {
     return Promise.all([
       this.selectAll(view.skip(page?.skip).take(page?.take)),
       withCount ? this.getTotal(view) : -1,

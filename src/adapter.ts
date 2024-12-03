@@ -1,4 +1,4 @@
-import { Column, GetColumnHolder, Inner, SqlViewTemplate } from "./define.js"
+import { Column, GetColumnHolder, Inner, SelectResult, SqlViewTemplate } from "./define.js"
 import { SqlView } from "./sqlView.js"
 import { exec, hasOneOf } from './private.js'
 
@@ -50,7 +50,7 @@ export class Adapter<PC = unknown> {
     }
   ) { }
 
-  private rawSelectAll<VT extends { [key: string]: Column<boolean, {} | null> }>(
+  private rawSelectAll<VT extends SqlViewTemplate>(
     view: SqlView<VT>,
     flags: {
       order: boolean,
@@ -76,15 +76,45 @@ export class Adapter<PC = unknown> {
     })
     const selectTemplate = instance.template
     const mapper2 = new Map<Inner, string>()
-    const formatCbArr = new Array<(raw: { [key: string]: unknown }) => [string, any]>()
-    for (const key in selectTemplate) {
-      if (!Object.prototype.hasOwnProperty.call(selectTemplate, key)) { continue }
-      const column = selectTemplate[key];
-      const { withNull, inner, format } = column.opts
-      if (!mapper2.has(inner)) { mapper2.set(inner, `value_${mapper2.size}`) }
-      const alias = mapper2.get(inner)!
-      formatCbArr.push((raw) => [key, withNull && raw[alias] === null ? null : format(raw[alias])])
+    const effectCbArr = new Array<(baseRaw: unknown, selectResult: { [key: string]: unknown }) => void>()
+
+    const iterateTemplate = (selectTemplate: SqlViewTemplate, accessor: string, path: (baseRaw: unknown) => { [key: string]: unknown }) => {
+      if (selectTemplate instanceof Column) {
+        const { withNull, inner, format } = selectTemplate.opts
+        if (!mapper2.has(inner)) { mapper2.set(inner, `value_${mapper2.size}`) }
+        const alias = mapper2.get(inner)!
+        if (withNull) {
+          effectCbArr.push((baseRaw, selectResult) => {
+            const raw = path(baseRaw)
+            raw[accessor] = selectResult[alias] === null ? null : format(selectResult[alias])
+          })
+        } else {
+          effectCbArr.push((baseRaw, selectResult) => {
+            const raw = path(baseRaw)
+            raw[accessor] = format(selectResult[alias])
+          })
+        }
+      } else if (selectTemplate instanceof Array) {
+        effectCbArr.push((baseRaw) => {
+          const raw = path(baseRaw)
+          raw[accessor] ||= []
+        })
+        selectTemplate.forEach((template, i) => {
+          iterateTemplate(template, i.toString(), (baseRaw) => path(baseRaw)[accessor] as { [key: string]: unknown })
+        })
+      } else {
+        effectCbArr.push((baseRaw) => {
+          const raw = path(baseRaw)
+          raw[accessor] ||= {}
+        })
+        for (const key in selectTemplate) {
+          if (!Object.prototype.hasOwnProperty.call(selectTemplate, key)) { continue }
+          const template = selectTemplate[key]
+          iterateTemplate(template, key, (baseRaw) => path(baseRaw)[accessor] as { [key: string]: unknown })
+        }
+      }
     }
+    iterateTemplate(selectTemplate, 'result', (raw) => raw as { [key: string]: unknown })
     const sqlBody = instance.getSqlBody({
       order: flags.order,
       usedInner: [...mapper2.keys()]
@@ -94,21 +124,21 @@ export class Adapter<PC = unknown> {
     return {
       sql,
       param: param.getResult(),
-      rawFormatter: (raw: { [key: string]: unknown }): {
-        -readonly [key in keyof VT]: VT[key] extends Column<infer N, infer R> ? ((N extends false ? never : null) | R) : never
-      } => {
-        return Object.fromEntries(formatCbArr.map((format) => format(raw))) as any
+      rawFormatter: (selectResult: { [key: string]: unknown }): SelectResult<VT> => {
+        const raw = { result: {} as any }
+        effectCbArr.forEach((effect) => effect(raw, selectResult))
+        return raw.result
       }
     }
   }
 
-  selectAll<VT extends { [key: string]: Column<boolean, {} | null> }>(view: SqlView<VT>) {
+  selectAll<VT extends SqlViewTemplate>(view: SqlView<VT>) {
     return this.rawSelectAll(view, {
       order: true,
     })
   }
 
-  aggrateView<VT1 extends SqlViewTemplate, VT2 extends { [key: string]: Column<boolean, {} | null> }>(
+  aggrateView<VT1 extends SqlViewTemplate, VT2 extends SqlViewTemplate>(
     view: SqlView<VT1>,
     getTemplate: (expr: (target: (ref: GetColumnHolder<VT1>) => string) => Column<boolean, unknown>) => VT2,
   ) {
