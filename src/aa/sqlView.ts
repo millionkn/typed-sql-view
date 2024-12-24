@@ -1,8 +1,5 @@
-
-import { Column, DefaultColumnType, Relation, SqlViewTemplate } from "./define.js"
-import { Inner } from "./private.js"
+import { Inner, BuildCtx, Column, Relation, SqlViewTemplate, flatViewTemplate, resolveSqlStr, GetColumnHolder, exec, sym, hasOneOf } from "./define.js"
 import { SelectBody } from "./selectBody.js"
-import { flatViewTemplate, resolveSqlStr } from "./tools.js"
 
 export type SelectState = {
   usedInner: Inner[],
@@ -11,19 +8,16 @@ export type SelectState = {
 
 export type SelectRuntime<VT extends SqlViewTemplate> = {
   template: VT,
-  getStatement: (state: SelectState) => SelectBody,
+  getSelectBody: (state: SelectState) => SelectBody,
 }
 
-export type ColumnDeclareFun<T> = (columnExpr: (input: T) => string) => DefaultColumnType
-export type GetColumnHolder<T> = (ref: (e: T) => Column) => string
+export type ColumnDeclareFun<T> = (columnExpr: (input: T) => string) => Column
+
 
 
 export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
   constructor(
-    public getInstance: (ctx: {
-      genAlias: () => string,
-      param: (value: any) => string,
-    }) => SelectRuntime<VT1>,
+    public getInstance: (buildCtx: BuildCtx) => SelectRuntime<VT1>,
   ) { }
 
   pipe<R>(op: (self: this) => R): R {
@@ -33,28 +27,25 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
   andWhere(getCondationStr: (tools: {
     ref: GetColumnHolder<VT1>,
     param: (value: any) => string,
+    ctx: BuildCtx,
   }) => null | false | undefined | string): SqlView<VT1> {
-    return new SqlView((initCtx) => {
-      const instance = this.getInstance(initCtx)
-      const expr = resolveSqlStr<{
-        type: 'aliasSym', aliasSym: AliasSym
-      } | {
-        type: 'inner',
-        inner: Inner,
-      }>((holder) => {
+    return new SqlView((ctx) => {
+      const instance = this.getInstance(ctx)
+      const expr = resolveSqlStr<Inner>((holder) => {
         const str = getCondationStr({
-          ref: (ref) => holder({ type: 'inner', inner: ref(instance.template).opts.inner }),
-          param: initCtx.param,
+          ref: (ref) => holder(ref(instance.template)[sym]().inner),
+          param: ctx.setParam,
+          ctx,
         })
         return typeof str !== 'string' ? '' : str.trim()
       })
       return {
         template: instance.template,
-        getStatement: (info) => {
+        getSelectBody: (info) => {
           const usedInner = [...new Set(info.usedInner.concat(
             expr.flatMap((e) => typeof e !== 'object' || e.type !== 'inner' ? [] : e.inner)
           ))]
-          let sqlBody = instance.getStatement({
+          let sqlBody = instance.getSelectBody({
             order: info.order,
             usedInner,
           })
@@ -94,7 +85,7 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
         getSqlBody: (info) => {
           const groupBy = [...new Set(flatViewTemplate(keys).map((c) => c.opts.inner))]
           const usedInner = [...new Set(info.usedInner.flatMap((inner) => columnHelper.saved.get(inner) ?? inner).concat(groupBy))]
-          let sqlBody = instance.getStatement({
+          let sqlBody = instance.getSelectBody({
             order: info.order,
             usedInner,
           })
@@ -219,13 +210,13 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
   }
 
   mapTo<const VT extends SqlViewTemplate>(getTemplate: (e: VT1, define: ColumnDeclareFun<(c: Column) => string>) => VT): SqlView<VT> {
-    return new SqlView((init) => {
+    return new SqlView<VT>((init) => {
       const instance = this.getInstance(init)
       const columnHelper = new ColumnHelper()
       return {
         template: getTemplate(instance.template, (cr) => columnHelper.createColumn((ir) => cr((c) => ir(c.opts.inner)))),
         getSqlBody: (info) => {
-          return instance.getStatement({
+          return instance.getSelectBody({
             order: info.order,
             usedInner: [...new Set(info.usedInner.flatMap((inner) => columnHelper.saved.get(inner) ?? inner))]
           })
@@ -234,31 +225,16 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
     })
   }
 
-  forceMapTo<VT extends SqlViewTemplate>(getTemplate: (e: VT1, define: ColumnDeclareFun<(c: Column) => string>) => VT): SqlView<VT> {
-    return this
-      .bracketIf(({ state }) => hasOneOf(state, ['groupBy', 'order', 'skip', 'take', 'where']))
-      .mapTo(getTemplate)
-      .pipe((view) => new SqlView((init) => {
-        const instance = view.getInstance(init)
-        return {
-          template: instance.template,
-          getSqlBody: (info) => instance.getStatement({
-            order: info.order,
-            usedInner: [...new Set(flatViewTemplate(instance.template).map((e) => e.opts.inner))],
-          }),
-        }
-      }))
-  }
-
   bracketIf(condation: (opts: {
     state: SqlState[],
   }) => boolean) {
-    return new SqlView((init) => {
+    return new SqlView<VT1>((init) => {
       const instance = this.getInstance(init)
       return {
+        s
         template: instance.template,
         getSqlBody: (info) => {
-          const sqlBody = instance.getStatement(info)
+          const sqlBody = instance.getSelectBody(info)
           if (condation({ state: [...sqlBody.state()] })) {
             return sqlBody.bracket(info.usedInner)
           } else {
@@ -278,14 +254,14 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
       return {
         template: instance.template,
         getSqlBody: (info) => {
-          if (!info.order) { return instance.getStatement(info) }
+          if (!info.order) { return instance.getSelectBody(info) }
           const expr = resolveSqlStr<Inner>((holder) => {
             const expr = getExpr((ref) => holder(ref(instance.template).opts.inner))
             if (typeof expr === 'string') { return expr.trim() }
             return ''
           })
           const usedInner = [...new Set(info.usedInner.concat(expr.filter((e): e is Inner => typeof e === 'object')))]
-          let sqlBody = instance.getStatement({
+          let sqlBody = instance.getSelectBody({
             order: info.order,
             usedInner,
           })
@@ -309,7 +285,7 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
       return {
         template: instance.template,
         getSqlBody: (ctx) => {
-          const sqlBody = instance.getStatement({
+          const sqlBody = instance.getSelectBody({
             order: true,
             usedInner: ctx.usedInner,
           })
@@ -329,7 +305,7 @@ export class SqlView<VT1 extends SqlViewTemplate = SqlViewTemplate> {
       return {
         template: instance.template,
         getSqlBody: (ctx) => {
-          const sqlBody = instance.getStatement({
+          const sqlBody = instance.getSelectBody({
             order: true,
             usedInner: ctx.usedInner,
           })
