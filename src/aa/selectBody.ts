@@ -42,7 +42,7 @@ export class SelectBody {
 
   bracket(usedColumn: Column<boolean, unknown, string>[]) {
     const tableAlias = this.initCtx.getAlias()
-    const usedInner = [...new Set(usedColumn.map((c)=>c[sym](false).inner))]  
+    const usedInner = [...new Set(usedColumn.map((c) => c[sym](false).inner))]
     return new SelectBody(this.initCtx, {
       from: {
         alias: tableAlias,
@@ -53,14 +53,15 @@ export class SelectBody {
             inner.expr = `${tableAlias}.${columnAlias}`
             return { inner, preExpr, alias: columnAlias }
           })
-          const cbArr = usedInnerInfo.map(({ inner, preExpr: temp }) => {
+          const cbArr = usedInnerInfo.map(({ inner, preExpr }) => {
             const current = inner.expr
-            inner.expr = temp
+            inner.expr = preExpr
             return () => inner.expr = current
           })
           const result = `(${this.buildSql(usedInnerInfo.map((e) => {
             return {
-              select:e.
+              select: e.preExpr,
+              alias: e.alias,
             }
           }))})`
           cbArr.forEach((cb) => cb())

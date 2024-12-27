@@ -3,7 +3,7 @@ import { SelectBody } from "./selectBody.js"
 import { SqlView } from "./sqlView.js"
 
 
-export function createFromDefine<const VT extends SqlViewTemplate>(
+export function createFromDefine<const VT extends SqlViewTemplate<string>>(
   rawFrom: string,
   getTemplate: (
     define: ColumnDeclareFun<string>,
@@ -16,7 +16,7 @@ export function createFromDefine<const VT extends SqlViewTemplate>(
     const alias = ctx.getAlias()
     const andWhere: string[] = []
     const template = getTemplate(
-      (getExpr) => Column[sym](getExpr(alias)),
+      (getExpr) => Column[sym](getExpr(alias),[]),
       {
         andWhere: (getExpr) => {
           andWhere.push(getExpr(alias, (value) => ctx.setParam(value)))

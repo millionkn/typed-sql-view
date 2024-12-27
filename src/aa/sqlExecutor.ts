@@ -1,4 +1,4 @@
-import { Inner, exec, hasOneOf, sym, Column, SelectResult, SqlViewTemplate, GetColumnHolder, SqlViewSelectTemplate } from "./define.js";
+import { Inner, exec, hasOneOf, sym, Column, SelectResult, SqlViewTemplate, GetColumnHolder } from "./define.js";
 import { SqlView } from "./sqlView.js";
 
 export class SqlExecutor {
@@ -11,7 +11,7 @@ export class SqlExecutor {
     }
   ) { }
 
-  private rawSelectAll<VT extends SqlViewSelectTemplate>(
+  private rawSelectAll<VT extends SqlViewTemplate<''>>(
     view: SqlView<VT>,
     flags: {
       order: boolean,
@@ -49,7 +49,7 @@ export class SqlExecutor {
     const mapper2 = new Map<Inner, string>()
     const formatCbArr = new Array<(baseRaw: unknown, selectResult: { [key: string]: unknown }) => void>()
 
-    const iterateTemplate = (selectTemplate: SqlViewTemplate, accessor: string, path: (baseRaw: unknown) => { [key: string]: unknown }) => {
+    const iterateTemplate = (selectTemplate: SqlViewTemplate<''>, accessor: string, path: (baseRaw: unknown) => { [key: string]: unknown }) => {
       if (selectTemplate instanceof Column) {
         const { withNull, inner, format } = selectTemplate[sym](true)
         if (!mapper2.has(inner)) { mapper2.set(inner, `value_${mapper2.size}`) }
@@ -88,7 +88,7 @@ export class SqlExecutor {
     iterateTemplate(selectTemplate, 'result', (raw) => raw as { [key: string]: unknown })
     const sqlBody = instance.getSelectBody({
       order: flags.order,
-      usedInner: [...mapper2.keys()]
+      usedColumn: [...mapper2.keys()].map((inner)=>Column[sym](inner))
     })
     let rawSql = sqlBody.buildSql([...mapper2].map(([inner, alias]) => {
       return {
@@ -112,7 +112,7 @@ export class SqlExecutor {
   }
 
 
-  aggrateView<VT1 extends SqlViewTemplate, VT2 extends SqlViewSelectTemplate>(
+  aggrateView<VT1 extends SqlViewTemplate<string>, VT2 extends SqlViewTemplate<''>>(
     view: SqlView<VT1>,
     getTemplate: (expr: (target: (ref: GetColumnHolder<VT1>) => string) => Column<boolean, unknown>) => VT2,
   ) {
@@ -128,26 +128,26 @@ export class SqlExecutor {
       })
   }
 
-  async selectAll<VT extends SqlViewSelectTemplate>(view: SqlView<VT>) {
+  async selectAll<VT extends SqlViewTemplate<''>>(view: SqlView<VT>) {
     const rawSql = this.rawSelectAll(view, {
       order: true,
     })
     return this.opts.runner(rawSql.sql, rawSql.paramArr).then((arr) => arr.map((raw) => rawSql.rawFormatter(raw)))
   }
 
-  async selectOne<VT extends SqlViewSelectTemplate>(view: SqlView<VT>) {
+  async selectOne<VT extends SqlViewTemplate<''>>(view: SqlView<VT>) {
     return this.selectAll(view.take(1)).then((arr) => arr.at(0) ?? null)
   }
 
 
 
-  async getTotal(view: SqlView<SqlViewTemplate>) {
+  async getTotal(view: SqlView<SqlViewTemplate<string>>) {
     return this.aggrateView(view, (expr) => {
       return { count: expr(() => `count(*)`).format((raw) => Number(raw)).withNull(false) }
     }).then((e) => e.count)
   }
 
-  async query<VT extends SqlViewSelectTemplate>(withCount: boolean, page: null | { take: number, skip: number }, view: SqlView<VT>) {
+  async query<VT extends SqlViewTemplate<''>>(withCount: boolean, page: null | { take: number, skip: number }, view: SqlView<VT>) {
     return Promise.all([
       this.selectAll(view.skip(page?.skip).take(page?.take)),
       withCount ? this.getTotal(view) : -1,
