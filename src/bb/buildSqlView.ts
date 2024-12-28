@@ -1,14 +1,12 @@
-import { sym, Column, SqlViewTemplate } from "./define.js"
-import { SqlBody } from "./sqlBody.js"
+import { sym, Column, SqlViewTemplate, SqlBody } from "./tools.js"
 import { SqlView } from "./sqlView.js"
 
-export function createFromDefine<const VT extends SqlViewTemplate<string>>(
-  getTemplate: (opts: {
+export function buildSqlView<const VT extends SqlViewTemplate<string>>(
+  getTemplate: (column: (expr: string) => Column<''>, opts: {
     addFrom: (raw: string) => string,
     leftJoin: (raw: string, condation: (alias: string) => string) => string,
     innerJoin: (raw: string, condation: (alias: string) => string) => string,
     andWhere: (condation: string) => void,
-    column: (expr: string) => Column<''>,
   }) => VT
 ) {
   return new SqlView((ctx) => {
@@ -22,12 +20,17 @@ export function createFromDefine<const VT extends SqlViewTemplate<string>>(
       take: null,
       skip: 0,
     }
-    const template = getTemplate({
+    const template = getTemplate((expr) => {
+      return Column[sym]({
+        expr,
+        declareUsed: () => { },
+      })
+    }, {
       addFrom: (raw) => {
         const alias = ctx.genAlias()
         sqlBody.from.push({
           alias,
-          segment: raw,
+          expr: raw,
         })
         return alias
       },
@@ -37,7 +40,7 @@ export function createFromDefine<const VT extends SqlViewTemplate<string>>(
         sqlBody.join.push({
           type: 'inner',
           alias,
-          segment: raw,
+          expr: raw,
           condation: condation(alias),
         })
         return alias
@@ -47,27 +50,16 @@ export function createFromDefine<const VT extends SqlViewTemplate<string>>(
         sqlBody.join.push({
           type: 'left',
           alias,
-          segment: raw,
+          expr: raw,
           condation: condation(alias),
         })
         return alias
-      },
-      column: (expr) => {
-        return Column[sym]({
-          declareUsed: () => {
-            return {
-              ref: expr,
-            }
-          },
-        })
       },
     })
 
     return {
       template,
-      getSqlBody: () => {
-        return sqlBody
-      }
+      getSqlBody: () => sqlBody
     }
   })
 }
