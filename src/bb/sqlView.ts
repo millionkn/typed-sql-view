@@ -6,14 +6,16 @@ export type BuildFlag = {
 
 export type SelectRuntime<VT extends SqlViewTemplate<string>> = {
   template: VT,
-  getSqlBody: (flag: BuildFlag) => SqlBody,
+  getSqlBody: (flag: BuildFlag, usedInner: Set<Inner>) => SqlBody,
 }
 
 
 export class SqlView<VT1 extends SqlViewTemplate<string>> {
   constructor(
-    private _getInstance: (buildCtx: BuildCtx) => SelectRuntime<VT1>,
-  ) { }
+     _getInstance: (buildCtx: BuildCtx) => SelectRuntime<VT1>,
+  ) { 
+    this.
+  }
 
   pipe<R>(op: (self: this) => R): R {
     return op(this)
@@ -26,12 +28,38 @@ export class SqlView<VT1 extends SqlViewTemplate<string>> {
     getCondationExpr: (ref: GetColumnRef<{ base: VT1, extra: VT2 }>) => string,
   ): SqlView<{ base: VT1, extra: Relation<N, VT2> }> {
     return new SqlView((ctx) => {
-
-      let hasFromBase = false
-      let hasFromExtra = false
       const sp = exec(() => {
         const base = this._getInstance(ctx)
         const extra = view._getInstance(ctx)
+        const info: Map<Inner, {
+          from: 'base' | 'extra',
+          preExpr: string,
+          holder: ReturnType<typeof ctx.createHolder>,
+        }> = new Map()
+
+        flatViewTemplate(base.template).forEach((c) => {
+          const inner = c[sym].inner
+          const holder = ctx.createHolder()
+          info.set(inner, {
+            from: 'base',
+            preExpr: inner.expr,
+            holder,
+          })
+          inner.expr = holder.expr
+        })
+        const allExtra = flatViewTemplate(extra.template)
+        allExtra.forEach((c) => {
+          if (withNull) { c[sym].withNull = true }
+          const inner = c[sym].inner
+          const holder = ctx.createHolder()
+          info.set(inner, {
+            from: 'extra',
+            preExpr: inner.expr,
+            holder,
+          })
+          inner.expr = holder.expr
+        })
+
         const condationExpr = exec(() => {
           const resolver = ctx.createResolver<Inner>()
           return resolver.resolve(getCondationExpr((ref) => resolver.createHolder(() => ref({
@@ -39,27 +67,8 @@ export class SqlView<VT1 extends SqlViewTemplate<string>> {
             extra: extra.template,
           })[sym].inner)))
         })
-
-        flatViewTemplate(base.template).forEach((c) => {
-          const inner = c[sym].inner
-          inner.declareUsed = () => {
-            hasFromBase = true
-            
-          }
-        })
-        const allExtra = flatViewTemplate(extra.template)
-        if (withNull) {
-          allExtra.forEach((c) => c[sym].withNull = true)
-        }
-        allExtra.forEach((c) => {
-          const inner = c[sym].inner
-          inner.declareUsed = () => {
-            hasFromExtra = true
-            return { ref: resolver.createHolder(() => inner) }
-          }
-        })
-
         return {
+          info,
           base,
           extra,
           condationExpr,
@@ -71,34 +80,50 @@ export class SqlView<VT1 extends SqlViewTemplate<string>> {
           base: sp.base.template,
           extra: sp.extra.template as Relation<N, VT2>,
         },
-        getSqlBody: (info) => {
+        getSqlBody: (flag, usedInner) => {
+          const usedExtraInner = [...usedInner].filter((inner) => sp.info.get(inner)?.from === 'extra')
+          const usedBaseInner = [...usedInner].filter((inner) => sp.info.get(inner)?.from === 'base')
           if (mode === 'lazy') {
-            if (!hasFromExtra) {
-              return sp.base.getSqlBody(info)
+            if (usedExtraInner.length === 0) {
+              usedInner.forEach((inner) => {
+                const info = sp.info.get(inner)
+                info?.holder.replaceWith(info.preExpr)
+              })
+              return sp.base.getSqlBody(flag, usedInner)
             }
-            if (!withNull && !info.order) {
-              if (!hasFromBase) {
-                return sp.extra.getSqlBody(info)
+            if (!withNull && !flag.order) {
+              if (usedBaseInner.length === 0) {
+                usedInner.forEach((inner) => {
+                  const info = sp.info.get(inner)
+                  info?.holder.replaceWith(info.preExpr)
+                })
+                return sp.extra.getSqlBody(flag, usedInner)
               }
             }
           }
-          const condation = sp.condationExpr.map((e) => typeof e === 'string' ? e : e().declareUsed().ref).join('')
+          const innerInCondation = sp.condationExpr.map((e) => typeof e === 'string' ? e : e()).filter((e): e is Inner => typeof e !== 'string')
           const baseBody = exec(() => {
-            let sqlBody = sp.base.getSqlBody({
-              order: info.order,
-            })
+            let sqlBody = sp.base.getSqlBody(
+              {
+                order: flag.order,
+              },
+              new Set(usedBaseInner.concat(innerInCondation.filter((e) => sp.info.get(e)?.from === 'base')))
+            )
             const bracket = hasOneOf(sqlBodyState(sqlBody), ['groupBy', 'having', 'order', 'skip', 'take'])
             if (bracket) { sqlBody = sqlBody.bracket() }
             return sqlBody
           })
           let extraBody = exec(() => {
-            let extraBody = sp.extra.getSqlBody({
-              order: pickConfig(mode, {
-                'lazy': () => false,
-                'left': () => info.order,
-                'inner': () => info.order,
-              }),
-            })
+            let extraBody = sp.extra.getSqlBody(
+              {
+                order: pickConfig(mode, {
+                  'lazy': () => false,
+                  'left': () => flag.order,
+                  'inner': () => flag.order,
+                }),
+              },
+              new Set(usedBaseInner.concat(innerInCondation.filter((e) => sp.info.get(e)?.from === 'base')))
+            )
             const extraState = sqlBodyState(extraBody)
             const bracket = pickConfig(mode, {
               lazy: () => hasOneOf(extraState, ['innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take']),

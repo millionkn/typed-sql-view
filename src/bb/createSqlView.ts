@@ -1,11 +1,11 @@
-import { sym, Column, SqlViewTemplate, SqlBody } from "./tools.js"
+import { SqlViewTemplate, SqlBody, Column, sym } from "./tools.js"
 import { SqlView } from "./sqlView.js"
 
-export function buildSqlView<const VT extends SqlViewTemplate<string>>(
+export function createSqlView<VT extends SqlViewTemplate<string>>(
   getTemplate: (column: (expr: string) => Column<''>, opts: {
-    addFrom: (raw: string) => string,
-    leftJoin: (raw: string, condation: (alias: string) => string) => string,
-    innerJoin: (raw: string, condation: (alias: string) => string) => string,
+    addFrom: (expr: string) => string,
+    leftJoin: (expr: string, condation: (alias: string) => string) => string,
+    innerJoin: (expr: string, condation: (alias: string) => string) => string,
     andWhere: (condation: string) => void,
   }) => VT
 ) {
@@ -20,17 +20,12 @@ export function buildSqlView<const VT extends SqlViewTemplate<string>>(
       take: null,
       skip: 0,
     }
-    const template = getTemplate((expr) => {
-      return Column[sym]({
-        expr,
-        declareUsed: () => { },
-      })
-    }, {
-      addFrom: (raw) => {
+    const template = getTemplate((expr) => Column[sym]({ expr }), {
+      addFrom: (expr) => {
         const alias = ctx.genAlias()
         sqlBody.from.push({
           alias,
-          expr: raw,
+          expr,
         })
         return alias
       },
@@ -59,7 +54,10 @@ export function buildSqlView<const VT extends SqlViewTemplate<string>>(
 
     return {
       template,
-      getSqlBody: () => sqlBody
+      getSqlBody: ({ order }) => {
+        if (!order) { sqlBody.order = [] }
+        return sqlBody
+      }
     }
   })
 }

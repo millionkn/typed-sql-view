@@ -11,14 +11,8 @@ export function flatViewTemplate<T extends string>(template: SqlViewTemplate<T>)
 }
 
 export type Inner = {
-  declareUsed: () => void,
   expr: string,
 }
-
-export function createColumn(expr: string) { 
-  
-}
-
 export class Column<T extends string, R = unknown, N extends boolean = boolean> {
   static [sym](inner: Inner) {
     return new Column({
@@ -64,10 +58,6 @@ export class Column<T extends string, R = unknown, N extends boolean = boolean> 
       ...this[sym],
       assert: cur,
     })
-  }
-
-  declareUsed() {
-    return this[sym].inner.declareUsed()
   }
 }
 
@@ -115,6 +105,10 @@ export type BuildCtx = {
   adapter: Adapter,
   genAlias: () => string,
   setParam: (value: unknown) => string,
+  createHolder: () => {
+    expr: string,
+    replaceWith: (expr: string) => void,
+  },
   createResolver: CreateResolver,
 }
 
@@ -198,4 +192,27 @@ export function buildSqlBodyStr(adapter: Adapter, sqlBody: SqlBody) {
     buildResult.push(adapter.take(sqlBody.take))
   }
   return buildResult.join(' ').trim()
+}
+
+export function bracket(usedInner: Set<Inner>,alias:string, adapter: Adapter, sqlBody: SqlBody):SqlBody {
+  const raw = buildSqlBodyStr(adapter, sqlBody)
+  return {
+    from: [
+      {
+        alias,
+        expr: [
+          `select `,
+          !raw ? '' : 'from',
+          raw,
+        ].join(' ')
+      }
+    ],
+      join: [],
+      where: [],
+      groupBy: [],
+      having: [],
+      order: [],
+      take: null,
+      skip: 0,
+  }
 }

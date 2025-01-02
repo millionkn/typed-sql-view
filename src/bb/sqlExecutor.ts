@@ -1,4 +1,4 @@
-import { exec, sym, Column, SelectResult, SqlViewTemplate, SqlAdapter, GetColumnRef, CreateResolver, Inner } from "./tools.js";
+import { exec, sym, Column, SelectResult, SqlViewTemplate, SqlAdapter, CreateResolver, Inner } from "./tools.js";
 import { BuildFlag, SqlView } from "./sqlView.js";
 
 export class SqlExecutor {
@@ -39,9 +39,18 @@ export class SqlExecutor {
 
     const paramArr = [] as unknown[]
     const resolver = createResolver<string>()
+    const deepResolve = (expr: string): string => resolver.resolve(expr).map((e) => typeof e === 'string' ? e : deepResolve(e())).join('')
     const viewResult = view.rawBuild(flag, {
-      adapter: this.opts.adapter, 
+      adapter: this.opts.adapter,
       createResolver,
+      createHolder: () => {
+        let getValue = (): string => { throw new Error('holder but not replace') }
+        const holder = resolver.createHolder(getValue)
+        return {
+          expr: holder,
+          replaceWith: (expr) => { getValue = () => deepResolve(expr) }
+        }
+      },
       genAlias: exec(() => {
         let index = 0
         return () => resolver.createHolder(() => `table_${index++}`)
@@ -58,7 +67,7 @@ export class SqlExecutor {
     const formatCbArr = new Array<(baseRaw: unknown, selectResult: { [key: string]: unknown }) => void>()
     const iterateTemplate = (selectTemplate: SqlViewTemplate<''>, accessor: string, path: (baseRaw: unknown) => { [key: string]: unknown }) => {
       if (selectTemplate instanceof Column) {
-        const { withNull, inner, format } = selectTemplate[sym] 
+        const { withNull, format, inner } = selectTemplate[sym]
         if (!selectTarget.has(inner)) { selectTarget.set(inner, `value_${selectTarget.size}`) }
         const alias = selectTarget.get(inner)!
         if (withNull) {
@@ -98,9 +107,9 @@ export class SqlExecutor {
       .map(([inner, alias]) => `${inner.expr} ${alias}`)
       .join(',') ?? '1'
     const rawSql = [
-      `select ${resolver.resolve(selectTargetStr).map((e) => typeof e === 'string' ? e : e())}`,
+      `select ${deepResolve(selectTargetStr)}`,
       !viewResult.source ? '' : `from`,
-      resolver.resolve(viewResult.source).map((e) => typeof e === 'string' ? e : e()),
+      deepResolve(viewResult.source),
     ].join(' ')
 
     return {
