@@ -43,14 +43,14 @@ export const proxyInstance = <VT extends SqlViewTemplate<string>>(ctx: BuildCtx,
 			})
 			return outer
 		}) as VT,
-		decalerUsedExpr: (expr: string) => {
-			info.forEach((v) => {
-				if (!expr.includes(v.outer[sym].expr)) { return }
-				v.used = true
-				instance.decalerUsedExpr(v.inner[sym].expr)
-			})
-			instance.decalerUsedExpr(expr)
-		},
+		decalerUsedExpr: (expr: string) => expr.split(`'"'"`).forEach((key, i) => {
+			if (i % 2 === 0) { return }
+			const e = info.get(key)
+			if (!e) { return }
+			if (e.used) { return }
+			e.used = true
+			instance.decalerUsedExpr(e.inner[sym].expr)
+		}),
 		getSqlBody: (opts: {
 			flag: BuildFlag,
 			bracketIf: (sqlBody: SqlBody) => boolean
@@ -222,6 +222,19 @@ export class SqlView<VT1 extends SqlViewTemplate<string>> {
 				},
 			}
 		})
+	}
+
+	join<
+		M extends 'left' | 'inner' | 'lazy',
+		N extends { inner: false, left: boolean, lazy: boolean }[M],
+		VT2 extends SqlViewTemplate<string>
+	>(
+		mode: M,
+		withNull: N,
+		view: SqlView<VT2>,
+		getCondationExpr: (base: VT1, extra: Relation<N, VT2>) => string,
+	) {
+		return this._join(mode, withNull, view, getCondationExpr)
 	}
 
 	leftJoin<N extends boolean, VT2 extends SqlViewTemplate<string>>(
