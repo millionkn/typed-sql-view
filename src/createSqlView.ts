@@ -1,7 +1,7 @@
 import { SqlViewTemplate, SqlBody } from "./tools.js"
 import { SqlView } from "./sqlView.js"
 
-export function createSqlView<VT extends SqlViewTemplate<string>>(
+export function createSqlView<const VT extends SqlViewTemplate>(
 	getTemplate: (opts: {
 		addFrom: (expr: string) => string,
 		leftJoin: (expr: string, condation: (alias: string) => string) => string,
