@@ -1,4 +1,4 @@
-import { Adapter, SqlExecutor, createSqlView, Column, SqlView, } from '../src/index.js'
+import { SqlExecutor, createSqlView, } from '../src/index.js'
 import z from 'zod'
 import { createColumn } from '../src/tools.js'
 
@@ -9,7 +9,7 @@ const companyTableDefine = createSqlView(({ addFrom }) => {
 		companyType: createColumn(`"${alias}"."column_b"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
 		name: createColumn(`"${alias}"."column_c"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
 	}
-})
+}).andWhere((e,param)=>`${e.companyType} like ${param(`%type%`)}`)
 
 const personTableDefine = createSqlView(({ addFrom }) => {
 	const alias = addFrom(`"public"."tableName2"`)
@@ -47,7 +47,7 @@ const view = personTableDefine
 				}
 			})
 			//这里由于groupBy了,所以会使用'having'而不是'where'
-			.andWhere((e,param) => `${ e.content.minScore} > ${param(0)}`)
+			.andWhere((e, param) => `${e.content.minScore} > ${param(0)}`)
 			//根据过滤条件，确定结果不会为null
 			.mapTo((e) => {
 				return {
@@ -57,13 +57,13 @@ const view = personTableDefine
 				}
 			})
 	})
-	.pipe((view) => companyTableDefine.joinUnstable((base,{lazyJoin}) => {
+	.pipe((view) => companyTableDefine.joinUnstable((base, { lazyJoin }) => {
 		return {
 			base,
 			// 由于声明了join的withNull为true
 			// 所以minScore的withNull变回true,
 			// maxScore的withNull会由boolean变为true,但查询结果的推断类型相同
-			extra:lazyJoin(true,view,(t)=>`${t.companyType} = ${base.companyType}`)
+			extra: lazyJoin(true, view, (t) => `${t.companyType} = ${base.companyType}`)
 		}
 	}))
 
@@ -83,32 +83,22 @@ const executor = SqlExecutor.createMySqlExecutor(async (sql, params) => {
 	params: []
 }
 */
-executor.selectAll(view.mapTo((e) => ({
-	...e
+executor.selectAll(view.skip(1).take(5).mapTo((e) => ({
+	...e.base,
+	// ...e.extra,
 }))).then((arr) => {
 	type Arr = {
-		readonly companyId: string;
-		readonly companyType: string;
-		readonly name: string;
+		companyId: string;
+		companyType: string;
+		name: string;
 	}[]
+	const typeCheck: Arr = arr // it's ok
 })
 
-/**
-{
-	sql: 'select "table_0"."column_c" as "value_0","table_0"."column_b" as "value_1","table_1"."value_0" as "value_2" from "public"."tableName1" as "table_0" left join (select max("table_2"."column_c") as "value_0","table_3"."column_b" as "value_1" from "public"."tableName2" as "table_2" left join "public"."tableName1" as "table_3" on "table_2"."column_a" = "table_3"."column_a" group by "table_3"."column_b" having min("table_2"."column_c") > :param0) as "table_1" on "table_0"."column_b" = "table_1"."value_1"',
-	params: [ 0 ]
-}
-*/
-// executor.selectAll(view.mapTo((e) => ({
-// 	companyName: e.base.name,
-// 	companyType: e.base.companyType,
-// 	maxScore: e.extra.maxScore.format((v) => Number(v)),
-// 	// minScore:e.extra.minScore,
-// }))).then((arr) => {
-// 	type Arr = {
-// 		readonly companyName: string;
-// 		readonly companyType: string;
-// 		readonly maxScore: number | null;
-// 	}[]
-// })
-
+SqlExecutor.createPostgresExecutor(async (sql, params) => {
+	console.log({ sql, params }) 
+	return []
+}).selectAll(view.skip(1).take(5).mapTo((e) => ({
+	...e.base,
+	...e.extra,
+})))

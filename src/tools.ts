@@ -64,11 +64,9 @@ export class Column<T extends string, R = unknown, N extends boolean = boolean> 
 			assert: cur,
 		})
 	}
-	static {
-		const p = Column.prototype as any
-		p.toString = function () {
-			return this[sym].expr
-		}
+
+	toString() {
+		return this[sym].expr
 	}
 }
 

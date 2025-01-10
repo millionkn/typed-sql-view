@@ -140,7 +140,12 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 
 	andWhere(getCondation: (
 		template: VT1,
-		param: (value: any) => string,
+		param: {
+			(value: unknown): string
+			arr: {
+				(value: unknown[]): string
+			}
+		},
 		ctx: BuildCtx,
 	) => null | false | undefined | string): SqlView<VT1> {
 		return new SqlView((ctx) => {
@@ -150,13 +155,12 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 				template: instance.template,
 				decalerUsedExpr: instance.decalerUsedExpr,
 				getSqlBody: (flag) => {
-					let condationExpr = getCondation(instance.template, (value) => {
-						if (value instanceof Array) {
-							return `(${value.map((v) => ctx.setParam(v)).join(',')})`
-						} else {
-							return ctx.setParam(value)
+					let condationExpr = getCondation(instance.template, Object.assign((value: unknown) => ctx.setParam(value), {
+						arr: (value: Iterable<unknown>) => {
+							const str = Array.prototype.map.call(value, (v) => ctx.setParam(v)).join(',')
+							return str.length === 0 ? `(null)` : `(${str})`
 						}
-					}, ctx)
+					}), ctx)
 					if (condationExpr) { condationExpr = condationExpr.trim() }
 					if (!condationExpr) {
 						return instance.getSqlBody({
@@ -256,14 +260,15 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 						})
 						return base.getSqlBody({ flag, bracketIf: () => false })
 					}
-					const arr = usedExtraArr.map(({ getCondationExpr, instance, mode }) => {
+					const arr = usedExtraArr.map(({ getCondationExpr, instance, mode }, index, arr) => {
 						const condationExpr = getCondationExpr()
 						base.decalerUsedExpr(condationExpr)
-						instance.decalerUsedExpr(condationExpr)
+						arr.slice(0, index + 1).forEach((e) => e.instance.decalerUsedExpr(condationExpr))
+						let body = null as null | SqlBody
 						return {
 							condationExpr,
 							mode,
-							body: instance.getSqlBody({
+							getBody: () => body ||= instance.getSqlBody({
 								flag: {
 									order: pickConfig(mode, {
 										'lazy': () => false,
@@ -287,9 +292,9 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 						from: baseBody.opts.from,
 						join: [
 							...baseBody.opts.join,
-							...arr.flatMap(({ body, mode, condationExpr }) => {
+							...arr.flatMap(({ getBody, mode, condationExpr }) => { 
 								return [
-									...body.opts.from.map((info) => {
+									...getBody().opts.from.map((info) => {
 										return {
 											type: pickConfig(mode, {
 												left: () => 'left' as const,
@@ -301,14 +306,14 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 											condation: condationExpr,
 										}
 									}),
-									...body.opts.join,
+									...getBody().opts.join,
 								]
 							}),
 						],
 						where: [
 							...baseBody.opts.where ?? [],
-							...arr.flatMap(({ body }) => {
-								return body.opts.where
+							...arr.flatMap(({ getBody }) => {
+								return getBody().opts.where
 							})
 						],
 						groupBy: [],
