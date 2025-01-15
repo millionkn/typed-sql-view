@@ -5,7 +5,7 @@ export function resolveTableDefine<T extends {
 	[key: string]: {
 		rawKey: string,
 		schema: (raw: unknown) => unknown
-	}
+	} & Record<string, unknown>
 }>(template: T) {
 	const columnArr = Object.entries(template).map(([key, meta]) => {
 		return { key, meta }
