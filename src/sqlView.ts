@@ -16,8 +16,8 @@ export type SelectResult<VT extends SqlViewTemplate> = VT extends readonly [] ? 
 	? [SelectResult<X>, ...SelectResult<Arr>]
 	: VT extends readonly (infer X extends SqlViewTemplate)[]
 	? SelectResult<X>[]
-	: VT extends Column<infer X, infer Y>
-	? (true extends X ? null : never) | Y
+	: VT extends Column<string, infer N, infer R>
+	? (true extends N ? null : never) | R
 	: VT extends { [key: string]: SqlViewTemplate }
 	? { -readonly [key in keyof VT]: SelectResult<VT[key]> }
 	: never
