@@ -169,10 +169,10 @@ export class SqlBody {
 			buildResult.push(`order by ${this.opts.order.map((e) => `${e.expr} ${e.order}`).join(',')}`)
 		})
 		if (this.opts.skip) {
-			buildResult.push(`'"'"skip__${this.opts.skip}'"'"`)
+			buildResult.push(`''""skip__${this.opts.skip}''""`)
 		}
 		if (this.opts.take !== null) {
-			buildResult.push(`'"'"take__${this.opts.take}'"'"`)
+			buildResult.push(`''""take__${this.opts.take}''""`)
 		}
 		return buildResult.join(' ').trim()
 	}
@@ -230,10 +230,10 @@ export const createResolver = exec(() => {
 			createHolder: (getValue: () => T) => {
 				const key = `holder_${nsIndex}_${index++}`
 				saved.set(key, getValue)
-				return `'"'"${key}'"'"`
+				return `''""${key}''""`
 			},
 			resolve: (str: string, unResolved: (key: string) => string): Array<string | (() => T)> => {
-				return str.split(`'"'"`).map((str, i) => {
+				return str.split(`''""`).map((str, i) => {
 					if (i % 2 === 0) { return str }
 					const getValue = saved.get(str)
 					if (getValue) {
