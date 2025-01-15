@@ -208,7 +208,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 		})
 	}
 
-	joinUnstable<VT extends SqlViewTemplate>(getTemplate: (e: VT1, opts: {
+	joinUnstable<const VT extends SqlViewTemplate>(getTemplate: (e: VT1, opts: {
 		lazyJoin: <N extends boolean, VT extends SqlViewTemplate>(withNull: N, view: SqlView<VT>, getCondationExpr: (t: Relation<N, VT>) => string) => Relation<N, VT>,
 		leftJoin: <N extends boolean, VT extends SqlViewTemplate>(withNull: N, view: SqlView<VT>, getCondationExpr: (t: Relation<N, VT>) => string) => Relation<N, VT>,
 		innerJoin: <VT extends SqlViewTemplate>(view: SqlView<VT>, getCondationExpr: (t: VT) => string) => VT,

@@ -1,7 +1,7 @@
 import { createSqlView } from "./createSqlView.js"
 import { Column, createColumn } from "./tools.js"
 
-export function resolveTableDefine<T extends {
+export function resolveTableDefine<const T extends {
 	[key: string]: {
 		rawKey: string,
 		schema: (raw: unknown) => unknown
