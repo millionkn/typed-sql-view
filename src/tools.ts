@@ -18,21 +18,21 @@ export class Column<T extends string, N extends boolean = boolean, R = unknown> 
 		return new Column({
 			expr,
 			assert: '',
-			format: (raw) => raw,
+			format: async (raw) => raw,
 			withNull: true,
 		})
 	}
 	[sym]: {
 		expr: string,
 		withNull: N,
-		format: (raw: unknown) => R,
+		format: (raw: unknown) => Promise<R>,
 		assert: T,
 	}
 	private constructor(
 		opts: {
 			expr: string,
 			withNull: N,
-			format: (raw: unknown) => R,
+			format: (raw: unknown) => Promise<R>,
 			assert: T,
 		}
 	) {
@@ -47,11 +47,11 @@ export class Column<T extends string, N extends boolean = boolean, R = unknown> 
 		})
 	}
 
-	format<R2>(value: (raw: unknown, format: (raw: unknown) => R) => R2) {
+	format<R2>(value: (raw: unknown, format: (raw: unknown) => Promise<R>) => Async<R2>) {
 		const format = this[sym].format
 		return new Column<T, N, R2>({
 			...this[sym],
-			format: (raw) => value(raw, format)
+			format: async (raw) => value(raw, format)
 		})
 	}
 
@@ -247,3 +247,4 @@ export const createResolver = exec(() => {
 	}
 })
 export const createColumn = (expr: string) => Column.create(expr)
+export type Async<T> = T | PromiseLike<T>

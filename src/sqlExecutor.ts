@@ -1,5 +1,5 @@
 import { exec, SqlViewTemplate, Adapter, createResolver, hasOneOf, Column } from "./tools.js";
-import { BuildFlag, SqlView } from "./sqlView.js";
+import { BuildFlag, SelectResult, SqlView } from "./sqlView.js";
 
 export class SqlExecutor {
 	static createMySqlExecutor(runner: (sql: string, params: unknown[]) => Promise<{ [key: string]: unknown }[]>) {
@@ -102,9 +102,9 @@ export class SqlExecutor {
 			})
 	}
 
-	async selectAll<VT extends SqlViewTemplate>(view: SqlView<VT>) {
+	async selectAll<VT extends SqlViewTemplate>(view: SqlView<VT>): Promise<SelectResult<VT>[]> {
 		const rawSql = this.rawSelectAll(view, { order: true })
-		return this.opts.runner(rawSql.sql, rawSql.paramArr).then((arr) => arr.map((raw) => rawSql.rawFormatter(raw)))
+		return this.opts.runner(rawSql.sql, rawSql.paramArr).then((arr) => Promise.all(arr.map((raw) => rawSql.rawFormatter(raw))))
 	}
 
 	async selectOne<VT extends SqlViewTemplate>(view: SqlView<VT>) {

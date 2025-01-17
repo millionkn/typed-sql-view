@@ -6,7 +6,10 @@ const companyTableDefine = createSqlView(({ addFrom }) => {
 	const alias = addFrom(`"public"."tableName1"`)
 	return {
 		companyId: createColumn(`"${alias}"."column_a"`).assert('', 'companyId').withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
-		companyType: createColumn(`"${alias}"."column_b"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
+		companyType: createColumn(`"${alias}"."column_b"`)
+			.withNull(false)
+			//format支持异步
+			.format(async (raw) => z.string().transform((v) => String(v)).parse(raw)),
 		name: createColumn(`"${alias}"."column_c"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
 	}
 }).andWhere((e,param)=>`${e.companyType} like ${param(`%type%`)}`)

@@ -106,7 +106,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 		const viewInstance = this._getInstance(ctx)
 		const selectTarget: Map<string, {
 			alias: string,
-			format: (raw: { [key: string]: unknown }) => unknown,
+			format: (raw: { [key: string]: unknown }) => Promise<unknown>,
 		}> = new Map()
 
 		iterateTemplate(viewInstance.template, (c) => {
@@ -117,7 +117,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 			if (opts.withNull) {
 				selectTarget.set(opts.expr, {
 					alias,
-					format: (raw) => raw[alias] === null ? null : opts.format(raw[alias]),
+					format: async (raw) => raw[alias] === null ? null : opts.format(raw[alias]),
 				})
 			} else {
 				selectTarget.set(opts.expr, {
@@ -132,8 +132,19 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 			.buildSqlStr([...selectTarget].map(([expr, { alias }]) => ({ expr, alias })))
 		return {
 			sql: rawSql,
-			rawFormatter: (selectResult: { [key: string]: unknown }) => {
-				return iterateTemplate(viewInstance.template, (c) => selectTarget.get(c[sym].expr)!.format(selectResult)) as SelectResult<VT1>
+			rawFormatter: async (selectResult: { [key: string]: unknown }) => {
+				const loadingArr: Promise<unknown>[] = new Array()
+				const resultMapper = new Map<string, unknown>()
+				iterateTemplate(viewInstance.template, (c) => {
+					const expr = c[sym].expr
+					if (!resultMapper.has(expr)) {
+						loadingArr.push(selectTarget.get(expr)!.format(selectResult).then((value) => {
+							resultMapper.set(expr, value)
+						}))
+					}
+				})
+				await Promise.all(loadingArr)
+				return iterateTemplate(viewInstance.template, (c) => resultMapper.get(c[sym].expr)) as SelectResult<VT1>
 			}
 		}
 	}
