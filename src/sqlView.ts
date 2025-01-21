@@ -219,8 +219,96 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 		})
 	}
 
-	joinUnstable<const VT extends SqlViewTemplate>(getTemplate: (e: VT1, opts: {
-		lazyJoin: <N extends boolean, VT extends SqlViewTemplate>(withNull: N, view: SqlView<VT>, getCondationExpr: (t: Relation<N, VT>) => string) => Relation<N, VT>,
+	joinLazy<const VT extends SqlViewTemplate>(getTemplate: (e: VT1, opts: {
+		leftJoin: <N extends boolean, VT extends SqlViewTemplate>(withNull: N, view: SqlView<VT>, getCondationExpr: (t: Relation<N, VT>) => string) => Relation<N, VT>,
+	}) => VT): SqlView<VT> {
+		return new SqlView((ctx) => {
+			const base = proxyInstance<VT1>(ctx, this._getInstance(ctx), (c) => c)
+			const extraArr: Array<{
+				instance: ReturnType<typeof proxyInstance<SqlViewTemplate>>,
+				getCondationExpr: () => string,
+			}> = []
+			return {
+				template: getTemplate(base.template, {
+					leftJoin: (withNull, view, getCondationExpr) => {
+						const proxy = proxyInstance<Parameters<typeof getCondationExpr>[0]>(ctx, view._getInstance(ctx), (c) => {
+							c[sym].withNull ||= withNull
+							return c
+						})
+						extraArr.push({
+							instance: proxy,
+							getCondationExpr: () => getCondationExpr(proxy.template)
+						})
+						return proxy.template
+					},
+				}),
+				decalerUsedExpr: (expr) => {
+					base.decalerUsedExpr(expr)
+					extraArr.forEach((e) => e.instance.decalerUsedExpr(expr))
+				},
+				getSqlBody: (flag) => {
+					const usedExtraArr = extraArr.filter((e) => e.instance.instanceUsed())
+					if (usedExtraArr.length === 0) {
+						base.info.forEach((e) => {
+							e.replaceWith(e.inner[sym].expr)
+						})
+						return base.getSqlBody({ flag, bracketIf: () => false })
+					}
+					const arr = usedExtraArr.map(({ getCondationExpr, instance }, index, arr) => {
+						const condationExpr = getCondationExpr()
+						base.decalerUsedExpr(condationExpr)
+						arr.slice(0, index + 1).forEach((e) => e.instance.decalerUsedExpr(condationExpr))
+						let body = null as null | SqlBody
+						return {
+							condationExpr,
+							getBody: () => body ||= instance.getSqlBody({
+								flag: {
+									order: false,
+								},
+								bracketIf: (sqlBody) => hasOneOf(sqlBody.state(), ['leftJoin', 'innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take'])
+							})
+						}
+					})
+					const baseBody = base.getSqlBody({
+						flag,
+						bracketIf: (sqlBody) => hasOneOf(sqlBody.state(), ['groupBy', 'having', 'order', 'skip', 'take']),
+					})
+					return new SqlBody({
+						from: baseBody.opts.from,
+						join: [
+							...baseBody.opts.join,
+							...arr.flatMap(({ getBody, condationExpr }) => {
+								return [
+									...getBody().opts.from.map((info) => {
+										return {
+											type: 'left' as const,
+											alias: info.alias,
+											expr: info.expr,
+											condation: condationExpr,
+										}
+									}),
+									...getBody().opts.join,
+								]
+							}),
+						],
+						where: [
+							...baseBody.opts.where ?? [],
+							...arr.flatMap(({ getBody }) => {
+								return getBody().opts.where
+							})
+						],
+						groupBy: [],
+						having: [],
+						order: baseBody.opts.order,
+						take: baseBody.opts.take,
+						skip: baseBody.opts.skip,
+					})
+				},
+			}
+		})
+	}
+
+	join<const VT extends SqlViewTemplate>(getTemplate: (e: VT1, opts: {
 		leftJoin: <N extends boolean, VT extends SqlViewTemplate>(withNull: N, view: SqlView<VT>, getCondationExpr: (t: Relation<N, VT>) => string) => Relation<N, VT>,
 		innerJoin: <VT extends SqlViewTemplate>(view: SqlView<VT>, getCondationExpr: (t: VT) => string) => VT,
 	}) => VT): SqlView<VT> {
@@ -229,10 +317,10 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 			const extraArr: Array<{
 				instance: ReturnType<typeof proxyInstance<SqlViewTemplate>>,
 				getCondationExpr: () => string,
-				mode: "left" | "inner" | "lazy",
+				mode: "left" | "inner",
 			}> = []
 			const join = <N extends boolean, VT2 extends SqlViewTemplate>(
-				mode: "left" | "inner" | "lazy",
+				mode: "left" | "inner",
 				withNull: N,
 				view: SqlView<VT2>,
 				getCondationExpr: (extra: Relation<N, VT2>) => string,
@@ -250,7 +338,6 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 			}
 			return {
 				template: getTemplate(base.template, {
-					lazyJoin: (withNull, view, getCondation) => join('lazy', withNull, view, getCondation),
 					leftJoin: (withNull, view, getCondation) => join('left', withNull, view, getCondation),
 					innerJoin: (view, getCondation) => join('inner', false, view, getCondation),
 				}),
@@ -259,12 +346,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 					extraArr.forEach((e) => e.instance.decalerUsedExpr(expr))
 				},
 				getSqlBody: (flag) => {
-					const usedExtraArr = extraArr.filter((e) => {
-						if (e.mode === 'lazy') {
-							return e.instance.instanceUsed()
-						}
-						return true
-					})
+					const usedExtraArr = extraArr
 					if (usedExtraArr.length === 0) {
 						base.info.forEach((e) => {
 							e.replaceWith(e.inner[sym].expr)
@@ -281,14 +363,9 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 							mode,
 							getBody: () => body ||= instance.getSqlBody({
 								flag: {
-									order: pickConfig(mode, {
-										'lazy': () => false,
-										'left': () => flag.order,
-										'inner': () => flag.order,
-									}),
+									order: flag.order,
 								},
 								bracketIf: (sqlBody) => pickConfig(mode, {
-									lazy: () => hasOneOf(sqlBody.state(), ['leftJoin', 'innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take']),
 									left: () => hasOneOf(sqlBody.state(), ['leftJoin', 'innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take']),
 									inner: () => hasOneOf(sqlBody.state(), ['leftJoin', 'innerJoin', 'groupBy', 'having', 'order', 'skip', 'take']),
 								})
@@ -307,11 +384,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 								return [
 									...getBody().opts.from.map((info) => {
 										return {
-											type: pickConfig(mode, {
-												left: () => 'left' as const,
-												inner: () => 'inner' as const,
-												lazy: () => 'left' as const,
-											}),
+											type: mode,
 											alias: info.alias,
 											expr: info.expr,
 											condation: condationExpr,

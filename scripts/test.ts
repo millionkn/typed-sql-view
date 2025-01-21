@@ -34,10 +34,10 @@ const view = personTableDefine
 	//所以可以使用lazy,如果后面没有用到,就不进行join
 	//ps:left和inner都会立刻join,因为表的数量可能会被影响
 	//此处使用tag验证标签,一定程度上避免引用错误(可选)
-	.joinUnstable((e, { lazyJoin }) => {
+	.joinLazy((e, { leftJoin }) => {
 		return {
 			person: e,
-			company: lazyJoin(true, companyTableDefine, (t) => `${e.companyId} = ${t.companyId}`),
+			company: leftJoin(true, companyTableDefine, (t) => `${e.companyId} = ${t.companyId}`),
 		}
 	})
 	.pipe((view) => {
@@ -60,13 +60,13 @@ const view = personTableDefine
 				}
 			})
 	})
-	.pipe((view) => companyTableDefine.joinUnstable((base, { lazyJoin }) => {
+	.pipe((view) => companyTableDefine.joinLazy((base, { leftJoin }) => {
 		return {
 			base,
 			// 由于声明了join的withNull为true
 			// 所以minScore的withNull变回true,
 			// maxScore的withNull会由boolean变为true,但查询结果的推断类型相同
-			extra: lazyJoin(true, view, (t) => `${t.companyType} = ${base.companyType}`)
+			extra: leftJoin(true, view, (t) => `${t.companyType} = ${base.companyType}`)
 		}
 	}))
 
