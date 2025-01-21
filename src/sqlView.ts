@@ -122,7 +122,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 			} else {
 				selectTarget.set(opts.expr, {
 					alias,
-					format: opts.format,
+					format: async (raw) => opts.format(raw[alias]),
 				})
 			}
 
