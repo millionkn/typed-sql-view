@@ -1,33 +1,33 @@
 {
-  "name": "@millionkn/typed-sql-view",
-  "version": "0.4.0",
-  "description": "",
-  "type": "module",
-  "module": "./dist/index.js",
-  "scripts": {
-    "prepublish": "pnpm run build",
-    "build": "tsc",
-    "start": "cross-env TS_NODE_PROJECT=./tsconfig.test.json node --watch --loader ts-node/esm ./scripts/test.ts",
-    "start:debug": "cross-env TS_NODE_PROJECT=./tsconfig.test.json node --watch --loader ts-node/esm --inspect ./scripts/test.ts"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "devDependencies": {
-    "@types/node": "^20.11.27",
-    "cross-env": "^7.0.3",
-    "execa": "^8.0.1",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.4.2",
-    "zod": "^3.22.4"
-  },
-  "files": [
-    "./dist"
-  ],
-  "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    }
-  }
+	"name": "@millionkn/typed-sql-view",
+	"version": "0.4.1",
+	"description": "",
+	"type": "module",
+	"module": "./dist/index.js",
+	"scripts": {
+		"prepublish": "pnpm run build",
+		"build": "tsc",
+		"start": "cross-env TS_NODE_PROJECT=./tsconfig.test.json node --watch --loader ts-node/esm ./scripts/test.ts",
+		"start:debug": "cross-env TS_NODE_PROJECT=./tsconfig.test.json node --watch --loader ts-node/esm --inspect ./scripts/test.ts"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "ISC",
+	"devDependencies": {
+		"@types/node": "^20.11.27",
+		"cross-env": "^7.0.3",
+		"execa": "^8.0.1",
+		"ts-node": "^10.9.2",
+		"typescript": "^5.4.2",
+		"zod": "^3.22.4"
+	},
+	"files": [
+		"./dist"
+	],
+	"exports": {
+		".": {
+			"import": "./dist/index.js",
+			"types": "./dist/index.d.ts"
+		}
+	}
 }

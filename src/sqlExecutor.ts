@@ -2,9 +2,11 @@ import { exec, SqlViewTemplate, Adapter, createResolver, hasOneOf, Column } from
 import { BuildFlag, SelectResult, SqlView } from "./sqlView.js";
 
 export class SqlExecutor {
-	static createMySqlExecutor(runner: (sql: string, params: unknown[]) => Promise<{ [key: string]: unknown }[]>) {
+	static createMySqlExecutor(opts: {
+		runner: (sql: string, params: unknown[]) => Promise<{ [key: string]: unknown }[]>
+	}) {
 		return new SqlExecutor({
-			runner: (sql, params) => runner(sql, params),
+			runner: (sql, params) => opts.runner(sql, params),
 			adapter: {
 				paramHolder: () => `?`,
 				skip: (v) => `offset ${v}`,
@@ -12,9 +14,11 @@ export class SqlExecutor {
 			},
 		})
 	}
-	static createPostgresExecutor(runner: (sql: string, params: unknown[]) => Promise<{ [key: string]: unknown }[]>) {
+	static createPostgresExecutor(opts: {
+		runner: (sql: string, params: unknown[]) => Promise<{ [key: string]: unknown }[]>
+	}) {
 		return new SqlExecutor({
-			runner: (sql, params) => runner(sql, params),
+			runner: (sql, params) => opts.runner(sql, params),
 			adapter: {
 				paramHolder: (index) => `$${index + 1}`,
 				skip: (v) => `offset ${v}`,
