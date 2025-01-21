@@ -339,14 +339,14 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 	}
 
 	mapTo<const VT extends SqlViewTemplate>(getTemplate: (e: VT1, opts: {
-		decalreUsed: (expr: string) => void,
+		decalreUsed: (expr: string | Column<''>) => void,
 	}) => VT): SqlView<VT> {
 		return new SqlView((ctx) => {
 			const base = this._getInstance(ctx)
 			return {
 				template: getTemplate(base.template, {
 					decalreUsed: (expr) => {
-						base.decalerUsedExpr(expr)
+						base.decalerUsedExpr(expr.toString())
 					},
 				}),
 				decalerUsedExpr: base.decalerUsedExpr,
@@ -371,7 +371,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 
 	order(
 		order: 'asc' | 'desc',
-		getExpr: (template: VT1) => false | null | undefined | string,
+		getExpr: (template: VT1) => false | null | undefined | string | Column<''>,
 	): SqlView<VT1> {
 		return new SqlView((ctx) => {
 			const instance = proxyInstance<VT1>(ctx, this._getInstance(ctx), (c) => c)
@@ -385,7 +385,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 							bracketIf: () => false,
 						})
 					}
-					let expr = getExpr(instance.template)
+					let expr = getExpr(instance.template)?.toString()
 					if (expr) { expr = expr.trim() }
 					if (!expr) {
 						return instance.getSqlBody({
