@@ -12,7 +12,7 @@ const companyTableDefine = createSqlView(({ addFrom }) => {
 			.format(async (raw) => z.string().transform((v) => String(v)).parse(raw)),
 		name: createColumn(`"${alias}"."column_c"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
 	}
-}).andWhere((e,param)=>`${e.companyType} like ${param(`%type%`)}`)
+}).andWhere((e, param) => `${e.companyType} like ${param(`%type%`)}`)
 
 const personTableDefine = createSqlView(({ addFrom }) => {
 	const alias = addFrom(`"public"."tableName2"`)
@@ -72,11 +72,13 @@ const view = personTableDefine
 
 
 //适配mysql,也可自行实现 
-const executor = SqlExecutor.createMySqlExecutor(async (sql, params) => {
-	console.log({ sql, params })
-	// 使用其他工具进行query
-	// ...
-	return []
+const executor = SqlExecutor.createMySqlExecutor({
+	runner: async (sql, params) => {
+		console.log({ sql, params })
+		// 使用其他工具进行query
+		// ...
+		return []
+	}
 })
 
 
@@ -98,9 +100,11 @@ executor.selectAll(view.skip(1).take(5).mapTo((e) => ({
 	const typeCheck: Arr = arr // it's ok
 })
 
-SqlExecutor.createPostgresExecutor(async (sql, params) => {
-	console.log({ sql, params }) 
-	return []
+SqlExecutor.createPostgresExecutor({
+	runner: async (sql, params) => {
+		console.log({ sql, params })
+		return []
+	}
 }).selectAll(view.skip(1).take(5).mapTo((e) => ({
 	...e.base,
 	...e.extra,
