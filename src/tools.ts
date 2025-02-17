@@ -47,11 +47,11 @@ export class Column<T extends string, N extends boolean = boolean, R = unknown> 
 		})
 	}
 
-	format<R2>(value: (raw: unknown, format: (raw: unknown) => Promise<R>) => Async<R2>) {
+	format<R2>(value: (value: R) => Async<R2>) {
 		const format = this[sym].format
 		return new Column<T, N, R2>({
 			...this[sym],
-			format: async (raw) => value(raw, format)
+			format: async (raw) => value(await format(raw))
 		})
 	}
 
