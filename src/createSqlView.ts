@@ -3,6 +3,10 @@ import { SqlView } from "./sqlView.js"
 
 export function createSqlView<const VT extends SqlViewTemplate>(
 	getTemplate: (opts: {
+		param: {
+			(value: any): string
+			arr: (value: any[]) => string
+		},
 		addFrom: (expr: string) => string,
 		leftJoin: (expr: string, condation: (alias: string) => string) => string,
 		innerJoin: (expr: string, condation: (alias: string) => string) => string,
@@ -22,6 +26,12 @@ export function createSqlView<const VT extends SqlViewTemplate>(
 			skip: 0,
 		})
 		const template = getTemplate({
+			param: Object.assign((value: unknown) => ctx.setParam(value), {
+				arr: (value: Iterable<unknown>) => {
+					const str = Array.prototype.map.call(value, (v) => ctx.setParam(v)).join(',')
+					return str.length === 0 ? `(null)` : `(${str})`
+				}
+			}),
 			addFrom: (expr) => {
 				const alias = ctx.genAlias()
 				sqlBody.opts.from.push({
