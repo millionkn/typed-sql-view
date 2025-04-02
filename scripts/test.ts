@@ -9,7 +9,8 @@ const companyTableDefine = createSqlView(({ addFrom }) => {
 		companyType: createColumn(`"${alias}"."column_b"`)
 			.withNull(false)
 			//format支持异步
-			.format(async (raw) => z.string().transform((v) => String(v)).parse(raw)),
+			.ctx((ctx: { defaultType: string }) => ctx)
+			.format(async (raw, ctx) => z.string().transform((v) => String(v || ctx.defaultType)).parse(raw)),
 		name: createColumn(`"${alias}"."column_c"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
 	}
 }).andWhere((e, param) => `${e.companyType} like ${param(`%type%`)}`)
@@ -42,21 +43,21 @@ const view = personTableDefine
 	})
 	.pipe((view) => {
 		return view
-			.groupBy((e) => e.company.companyType, (e) => {
+			.groupBy((e) => [e.company.companyType], (e) => {
 				return {
+					companyType: e.company.companyType,
 					//由于后面没有使用minScore,所以实际不会被选择
 					minScore: createColumn(`min(${e.person.scoreValue})`),
 					maxScore: createColumn(`max(${e.person.scoreValue})`),
 				}
 			})
 			//这里由于groupBy了,所以会使用'having'而不是'where'
-			.andWhere((e, param) => `${e.content.minScore} > ${param(0)}`)
+			.andWhere((e, param) => `${e.minScore} > ${param(0)}`)
 			//根据过滤条件，确定结果不会为null
 			.mapTo((e) => {
 				return {
-					companyType: e.keys,
-					...e.content,
-					minScore: e.content.minScore.withNull(false),
+					...e,
+					minScore: e.minScore.withNull(false),
 				}
 			})
 	})
@@ -72,14 +73,16 @@ const view = personTableDefine
 
 
 //适配mysql,也可自行实现 
-const executor = SqlExecutor.createMySqlExecutor({
-	runner: async (sql, params) => {
-		console.log({ sql, params })
+const executor = SqlExecutor.createMySqlExecutor<{
+	runner: (sql: string, params: any[]) => Promise<any[]>
+}>({
+	runner: async (sql, params, ctx) => {
 		// 使用其他工具进行query
 		// ...
-		return []
+		return ctx.runner(sql, params)
 	}
 })
+
 
 
 /**
@@ -88,16 +91,19 @@ const executor = SqlExecutor.createMySqlExecutor({
 	params: []
 }
 */
-executor.selectAll(view.skip(1).take(5).mapTo((e) => ({
-	...e.base,
-	// ...e.extra,
-}))).then((arr) => {
-	type Arr = {
+
+
+executor.selectAll(view.skip(1).take(5).mapTo((e) => {
+	return e.base
+}), {
+	runner: async () => [],
+	'defaultType': 'xxx'
+}).then((arr) => {
+	const typeCheck = arr satisfies {
 		companyId: string;
 		companyType: string;
 		name: string;
 	}[]
-	const typeCheck: Arr = arr // it's ok
 })
 
 SqlExecutor.createPostgresExecutor({
@@ -108,4 +114,6 @@ SqlExecutor.createPostgresExecutor({
 }).selectAll(view.skip(1).take(5).mapTo((e) => ({
 	...e.base,
 	...e.extra,
-})))
+})), {
+	'defaultType': ''
+})
