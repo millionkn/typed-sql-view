@@ -93,12 +93,12 @@ const executor = SqlExecutor.createMySqlExecutor<{
 */
 
 
-executor.selectAll(view.skip(1).take(5).mapTo((e) => {
-	return e.base
-}), {
+executor.selectAll({
 	runner: async () => [],
 	'defaultType': 'xxx'
-}).then((arr) => {
+}, view.skip(1).take(5).mapTo((e) => {
+	return e.base
+})).then((arr) => {
 	const typeCheck = arr satisfies {
 		companyId: string;
 		companyType: string;
@@ -111,9 +111,9 @@ SqlExecutor.createPostgresExecutor({
 		console.log({ sql, params })
 		return []
 	}
-}).selectAll(view.skip(1).take(5).mapTo((e) => ({
+}).selectAll({
+	'defaultType': ''
+}, view.skip(1).take(5).mapTo((e) => ({
 	...e.base,
 	...e.extra,
-})), {
-	'defaultType': ''
-})
+})))

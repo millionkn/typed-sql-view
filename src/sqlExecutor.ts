@@ -91,9 +91,9 @@ export class SqlExecutor<RCtx> {
 
 
 	aggrateView<VT1 extends SqlViewTemplate, VT2 extends SqlViewTemplate>(
+		ctx: RCtx & SqlViewTemplateCtx<NoInfer<VT2>>,
 		view: SqlView<VT1>,
 		getTemplate: (vt: VT1) => VT2,
-		ctx: RCtx & SqlViewTemplateCtx<NoInfer<VT2>>
 	) {
 		return view
 			.bracketIf((sqlBody) => hasOneOf(sqlBody.state(), ['groupBy', 'skip', 'take']))
@@ -107,23 +107,23 @@ export class SqlExecutor<RCtx> {
 			})
 	}
 
-	async selectAll<VT extends SqlViewTemplate>(view: SqlView<VT>, ctx: RCtx & SqlViewTemplateCtx<NoInfer<VT>>): Promise<SelectResult<VT>[]> {
+	async selectAll<VT extends SqlViewTemplate>(ctx: RCtx & SqlViewTemplateCtx<NoInfer<VT>>, view: SqlView<VT>): Promise<SelectResult<VT>[]> {
 		const rawSql = this.rawSelectAll(view, { order: true })
 		return this.opts.runner(rawSql.sql, rawSql.paramArr, ctx).then((arr) => Promise.all(arr.map((raw) => rawSql.rawFormatter(raw, ctx))))
 	}
 
-	async selectOne<VT extends SqlViewTemplate>(view: SqlView<VT>, ctx: RCtx & SqlViewTemplateCtx<NoInfer<VT>>) {
-		return this.selectAll(view.take(1), ctx).then((arr) => arr[0] ?? null)
+	async selectOne<VT extends SqlViewTemplate>(ctx: RCtx & SqlViewTemplateCtx<NoInfer<VT>>, view: SqlView<VT>) {
+		return this.selectAll(ctx, view.take(1)).then((arr) => arr[0] ?? null)
 	}
 
-	async getTotal<VT extends SqlViewTemplate>(view: SqlView<VT>, ctx: RCtx) {
-		return this.aggrateView(view, () => Column.create(`count(*)`).format((raw) => Number(raw)).withNull(false), ctx)
+	async getTotal<VT extends SqlViewTemplate>(ctx: RCtx, view: SqlView<VT>) {
+		return this.aggrateView(ctx, view, () => Column.create(`count(*)`).format((raw) => Number(raw)).withNull(false))
 	}
 
-	async query<VT extends SqlViewTemplate>(withCount: boolean, page: null | { take: number, skip: number }, view: SqlView<VT>, ctx: RCtx & SqlViewTemplateCtx<NoInfer<VT>>) {
+	async query<VT extends SqlViewTemplate>(ctx: RCtx & SqlViewTemplateCtx<NoInfer<VT>>, withCount: boolean, page: null | { take: number, skip: number }, view: SqlView<VT>) {
 		return Promise.all([
-			this.selectAll(view.skip(page?.skip).take(page?.take), ctx),
-			withCount ? this.getTotal(view, ctx) : -1,
+			this.selectAll(ctx, view.skip(page?.skip).take(page?.take)),
+			withCount ? this.getTotal(ctx, view) : -1,
 		]).then(([data, total]) => ({ data, total }))
 	}
 }
