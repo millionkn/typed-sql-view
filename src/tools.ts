@@ -13,26 +13,26 @@ export const iterateTemplate = (template: SqlViewTemplate, cb: (column: Column<s
 		return Object.fromEntries(Object.entries(template).map(([key, t]) => [key, iterateTemplate(t, cb)]))
 	}
 }
-export class Column<T extends string, N extends boolean = boolean, R = unknown, Ctx = unknown> {
-	static create<Ctx = unknown>(expr: string) {
+export class Column<T extends string, N extends boolean = boolean, R = unknown> {
+	static create(expr: string) {
 		return new Column({
 			expr,
 			assert: '',
-			format: async (raw, ctx: Ctx) => raw,
+			format: async (raw) => raw,
 			withNull: true,
 		})
 	}
 	[sym]: {
 		expr: string,
 		withNull: N,
-		format: (raw: unknown, ctx: Ctx) => Promise<R>,
+		format: (raw: unknown) => Promise<R>,
 		assert: T,
 	}
 	private constructor(
 		opts: {
 			expr: string,
 			withNull: N,
-			format: (raw: unknown, ctx: Ctx) => Promise<R>,
+			format: (raw: unknown) => Promise<R>,
 			assert: T,
 		}
 	) {
@@ -41,24 +41,17 @@ export class Column<T extends string, N extends boolean = boolean, R = unknown, 
 
 
 	withNull<const N extends boolean>(value: N) {
-		return new Column<T, N, R, Ctx>({
+		return new Column<T, N, R>({
 			...this[sym],
 			withNull: value,
 		})
 	}
 
-	ctx<Ctx2>(getCtx: (ctx2: Ctx2) => Ctx) {
+	format<R2>(value: (value: R) => Async<R2>) {
 		const format = this[sym].format
-		return new Column<T, N, R, Ctx2>({
+		return new Column<T, N, R2>({
 			...this[sym],
-			format: (raw, ctx) => format(raw, getCtx(ctx))
-		})
-	}
-	format<R2>(value: (value: R, ctx: Ctx) => Async<R2>) {
-		const format = this[sym].format
-		return new Column<T, N, R2, Ctx>({
-			...this[sym],
-			format: async (raw, ctx) => value(await format(raw, ctx), ctx)
+			format: async (raw) => value(await format(raw))
 		})
 	}
 
@@ -66,7 +59,7 @@ export class Column<T extends string, N extends boolean = boolean, R = unknown, 
 		if (this[sym].assert !== pre) {
 			throw new Error(`assert tag '${pre}',but saved is '${this[sym].assert}'`)
 		}
-		return new Column<T2, N, R, Ctx>({
+		return new Column<T2, N, R>({
 			...this[sym],
 			assert: cur,
 		})
@@ -77,17 +70,17 @@ export class Column<T extends string, N extends boolean = boolean, R = unknown, 
 	}
 }
 
-export type SqlViewTemplate = DeepTemplate<Column<string, boolean, unknown, any>>
+export type SqlViewTemplate = DeepTemplate<Column<string, boolean, unknown>>
 
 type _Relation<N extends boolean, VT extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }> = {
 	[key in keyof VT]
 	: VT[key] extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate } ? _Relation<N, VT[key]>
-	: VT[key] extends Column<infer T, infer N2, infer R, infer Ctx> ? Column<T, (N2 & N) extends true ? true : boolean, R, Ctx>
+	: VT[key] extends Column<infer T, infer N2, infer R> ? Column<T, (N2 & N) extends true ? true : boolean, R>
 	: never
 }
 
 export type Relation<N extends boolean, VT extends SqlViewTemplate> = N extends false ? VT
-	: VT extends Column<infer T, infer N2, infer R, infer Ctx> ? Column<T, (N2 & N) extends true ? true : boolean, R, Ctx>
+	: VT extends Column<infer T, infer N2, infer R> ? Column<T, (N2 & N) extends true ? true : boolean, R>
 	: VT extends readonly SqlViewTemplate[] ? _Relation<N, VT>
 	: VT extends { readonly [key: string]: SqlViewTemplate } ? _Relation<N, VT>
 	: never
@@ -255,14 +248,3 @@ export const createResolver = exec(() => {
 })
 export const createColumn = (expr: string) => Column.create(expr)
 export type Async<T> = T | PromiseLike<T>
-
-type Merge<T> = (T extends any ? (x: T) => void : never) extends (x: infer R) => void ? R : never;
-
-type _SqlViewTemplateCtx<VT extends SqlViewTemplate, DT>
-	= VT extends Column<any, any, any, infer X> ? X extends {} ? X : DT
-	: VT extends readonly [] ? DT
-	: VT extends readonly [infer C extends SqlViewTemplate, ...infer Z extends SqlViewTemplate[]] ? ((_SqlViewTemplateCtx<C, unknown> & _SqlViewTemplateCtx<Z, unknown>) extends infer X ? X extends {} ? X : DT : never)
-	: VT extends { readonly [key: string]: SqlViewTemplate } ? Merge<{ [key in keyof VT]: _SqlViewTemplateCtx<VT[key], never> }[keyof VT]>
-	: DT
-
-export type SqlViewTemplateCtx<VT extends SqlViewTemplate> = _SqlViewTemplateCtx<VT, unknown>

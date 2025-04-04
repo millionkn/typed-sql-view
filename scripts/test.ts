@@ -9,8 +9,7 @@ const companyTableDefine = createSqlView(({ addFrom }) => {
 		companyType: createColumn(`"${alias}"."column_b"`)
 			.withNull(false)
 			//format支持异步
-			.ctx((ctx: { defaultType: string }) => ctx)
-			.format(async (raw, ctx) => z.string().transform((v) => String(v || ctx.defaultType)).parse(raw)),
+			.format(async (raw) => z.string().parse(raw)),
 		name: createColumn(`"${alias}"."column_c"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
 	}
 }).andWhere((e, param) => `${e.companyType} like ${param(`%type%`)}`)
@@ -76,10 +75,10 @@ const view = personTableDefine
 const executor = SqlExecutor.createMySqlExecutor<{
 	runner: (sql: string, params: any[]) => Promise<any[]>
 }>({
-	runner: async (sql, params, ctx) => {
+	runner: async (sql, params) => {
 		// 使用其他工具进行query
-		// ...
-		return ctx.runner(sql, params)
+		console.log(sql, params)
+		return []
 	}
 })
 
@@ -93,10 +92,7 @@ const executor = SqlExecutor.createMySqlExecutor<{
 */
 
 
-executor.selectAll({
-	runner: async () => [],
-	'defaultType': 'xxx'
-}, view.skip(1).take(5).mapTo((e) => {
+executor.selectAll(view.skip(1).take(5).mapTo((e) => {
 	return e.base
 })).then((arr) => {
 	const typeCheck = arr satisfies {
@@ -111,9 +107,7 @@ SqlExecutor.createPostgresExecutor({
 		console.log({ sql, params })
 		return []
 	}
-}).selectAll({
-	'defaultType': ''
-}, view.skip(1).take(5).mapTo((e) => ({
+}).selectAll(view.skip(1).take(5).mapTo((e) => ({
 	...e.base,
 	...e.extra,
 })))

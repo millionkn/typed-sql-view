@@ -1,12 +1,12 @@
-import { exec, SqlViewTemplate, Adapter, createResolver, hasOneOf, Column, SqlViewTemplateCtx } from "./tools.js";
+import { exec, SqlViewTemplate, Adapter, createResolver, hasOneOf, Column } from "./tools.js";
 import { BuildFlag, SelectResult, SqlView } from "./sqlView.js";
 
-export class SqlExecutor<RCtx> {
+export class SqlExecutor {
 	static createMySqlExecutor<RCtx = unknown>(opts: {
-		runner: (sql: string, params: unknown[], ctx: RCtx) => Promise<{ [key: string]: unknown }[]>
+		runner: (sql: string, params: unknown[]) => Promise<{ [key: string]: unknown }[]>
 	}) {
-		return new SqlExecutor<RCtx>({
-			runner: (sql, params, ctx) => opts.runner(sql, params, ctx),
+		return new SqlExecutor({
+			runner: (sql, params) => opts.runner(sql, params),
 			adapter: {
 				paramHolder: () => `?`,
 				skip: (v) => `offset ${v}`,
@@ -14,11 +14,11 @@ export class SqlExecutor<RCtx> {
 			},
 		})
 	}
-	static createPostgresExecutor<RCtx = unknown>(opts: {
-		runner: (sql: string, params: unknown[], ctx: RCtx) => Promise<{ [key: string]: unknown }[]>
+	static createPostgresExecutor(opts: {
+		runner: (sql: string, params: unknown[]) => Promise<{ [key: string]: unknown }[]>
 	}) {
-		return new SqlExecutor<RCtx>({
-			runner: (sql, params, ctx) => opts.runner(sql, params, ctx),
+		return new SqlExecutor({
+			runner: (sql, params) => opts.runner(sql, params),
 			adapter: {
 				paramHolder: (index) => `$${index + 1}`,
 				skip: (v) => `offset ${v}`,
@@ -29,7 +29,7 @@ export class SqlExecutor<RCtx> {
 	constructor(
 		private opts: {
 			adapter: Adapter,
-			runner: (sql: string, params: unknown[], ctx: RCtx) => Promise<{ [key: string]: unknown }[]>
+			runner: (sql: string, params: unknown[]) => Promise<{ [key: string]: unknown }[]>
 		}
 	) { }
 
@@ -91,7 +91,6 @@ export class SqlExecutor<RCtx> {
 
 
 	aggrateView<VT1 extends SqlViewTemplate, VT2 extends SqlViewTemplate>(
-		ctx: RCtx & SqlViewTemplateCtx<NoInfer<VT2>>,
 		view: SqlView<VT1>,
 		getTemplate: (vt: VT1) => VT2,
 	) {
@@ -100,30 +99,30 @@ export class SqlExecutor<RCtx> {
 			.mapTo((e) => getTemplate(e))
 			.pipe(async (view) => {
 				const rawSelect = this.rawSelectAll(view, { order: false })
-				return this.opts.runner(rawSelect.sql, rawSelect.paramArr, ctx).then(([raw]) => {
+				return this.opts.runner(rawSelect.sql, rawSelect.paramArr).then(([raw]) => {
 					if (!raw) { throw new Error('aggrate no result') }
-					return rawSelect.rawFormatter(raw, ctx)
+					return rawSelect.rawFormatter(raw)
 				})
 			})
 	}
 
-	async selectAll<VT extends SqlViewTemplate>(ctx: RCtx & SqlViewTemplateCtx<NoInfer<VT>>, view: SqlView<VT>): Promise<SelectResult<VT>[]> {
+	async selectAll<VT extends SqlViewTemplate>(view: SqlView<VT>): Promise<SelectResult<VT>[]> {
 		const rawSql = this.rawSelectAll(view, { order: true })
-		return this.opts.runner(rawSql.sql, rawSql.paramArr, ctx).then((arr) => Promise.all(arr.map((raw) => rawSql.rawFormatter(raw, ctx))))
+		return this.opts.runner(rawSql.sql, rawSql.paramArr).then((arr) => Promise.all(arr.map((raw) => rawSql.rawFormatter(raw))))
 	}
 
-	async selectOne<VT extends SqlViewTemplate>(ctx: RCtx & SqlViewTemplateCtx<NoInfer<VT>>, view: SqlView<VT>) {
-		return this.selectAll(ctx, view.take(1)).then((arr) => arr[0] ?? null)
+	async selectOne<VT extends SqlViewTemplate>(view: SqlView<VT>) {
+		return this.selectAll(view.take(1)).then((arr) => arr[0] ?? null)
 	}
 
-	async getTotal<VT extends SqlViewTemplate>(ctx: RCtx, view: SqlView<VT>) {
-		return this.aggrateView(ctx, view, () => Column.create(`count(*)`).format((raw) => Number(raw)).withNull(false))
+	async getTotal<VT extends SqlViewTemplate>(view: SqlView<VT>) {
+		return this.aggrateView(view, () => Column.create(`count(*)`).format((raw) => Number(raw)).withNull(false))
 	}
 
-	async query<VT extends SqlViewTemplate>(ctx: RCtx & SqlViewTemplateCtx<NoInfer<VT>>, withCount: boolean, page: null | { take: number, skip: number }, view: SqlView<VT>) {
+	async query<VT extends SqlViewTemplate>(withCount: boolean, page: null | { take: number, skip: number }, view: SqlView<VT>) {
 		return Promise.all([
-			this.selectAll(ctx, view.skip(page?.skip).take(page?.take)),
-			withCount ? this.getTotal(ctx, view) : -1,
+			this.selectAll(view.skip(page?.skip).take(page?.take)),
+			withCount ? this.getTotal(view) : -1,
 		]).then(([data, total]) => ({ data, total }))
 	}
 }

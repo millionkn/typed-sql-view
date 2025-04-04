@@ -1,4 +1,4 @@
-import { BuildCtx, Column, Relation, SqlBody, SqlViewTemplate, iterateTemplate, hasOneOf, pickConfig, sym, SqlViewTemplateCtx } from "./tools.js"
+import { BuildCtx, Column, Relation, SqlBody, SqlViewTemplate, iterateTemplate, hasOneOf, pickConfig, sym } from "./tools.js"
 
 export type BuildFlag = {
 	order: boolean,
@@ -16,7 +16,7 @@ export type SelectResult<VT extends SqlViewTemplate> = VT extends readonly [] ? 
 	? [SelectResult<X>, ...SelectResult<Arr>]
 	: VT extends readonly (infer X extends SqlViewTemplate)[]
 	? SelectResult<X>[]
-	: VT extends Column<string, infer N, infer R, any>
+	: VT extends Column<string, infer N, infer R>
 	? (true extends N ? null : never) | R
 	: VT extends { [key: string]: SqlViewTemplate }
 	? { -readonly [key in keyof VT]: SelectResult<VT[key]> }
@@ -106,7 +106,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 		const viewInstance = this._getInstance(ctx)
 		const selectTarget: Map<string, {
 			alias: string,
-			format: (raw: { [key: string]: unknown }, ctx: SqlViewTemplateCtx<VT1>,) => Promise<unknown>,
+			format: (raw: { [key: string]: unknown }) => Promise<unknown>,
 		}> = new Map()
 
 		iterateTemplate(viewInstance.template, (c) => {
@@ -117,12 +117,12 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 			if (opts.withNull) {
 				selectTarget.set(opts.expr, {
 					alias,
-					format: async (raw, ctx) => raw[alias] === null ? null : opts.format(raw[alias], ctx),
+					format: async (raw) => raw[alias] === null ? null : opts.format(raw[alias]),
 				})
 			} else {
 				selectTarget.set(opts.expr, {
 					alias,
-					format: async (raw, ctx) => opts.format(raw[alias], ctx),
+					format: async (raw) => opts.format(raw[alias]),
 				})
 			}
 
@@ -132,13 +132,13 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 			.buildSqlStr([...selectTarget].map(([expr, { alias }]) => ({ expr, alias })))
 		return {
 			sql: rawSql,
-			rawFormatter: async (selectResult: { [key: string]: unknown }, ctx: SqlViewTemplateCtx<VT1>) => {
+			rawFormatter: async (selectResult: { [key: string]: unknown }) => {
 				const loadingArr: Promise<unknown>[] = new Array()
 				const resultMapper = new Map<string, unknown>()
 				iterateTemplate(viewInstance.template, (c) => {
 					const expr = c[sym].expr
 					if (!resultMapper.has(expr)) {
-						loadingArr.push(selectTarget.get(expr)!.format(selectResult, ctx).then((value) => {
+						loadingArr.push(selectTarget.get(expr)!.format(selectResult).then((value) => {
 							resultMapper.set(expr, value)
 						}))
 					}
