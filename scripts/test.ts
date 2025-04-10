@@ -73,9 +73,7 @@ const view = personTableDefine
 
 
 //适配mysql,也可自行实现 
-const executor = SqlExecutor.createMySqlExecutor<{
-	runner: (sql: string, params: any[]) => Promise<any[]>
-}>({
+const executor = SqlExecutor.createMySqlExecutor({
 	runner: async (sql, params) => {
 		// 使用其他工具进行query
 		console.log(sql, params)
@@ -91,33 +89,6 @@ const executor = SqlExecutor.createMySqlExecutor<{
 	params: []
 }
 */
-
-type Z<Ctx> = {
-	[key in string]: Column<string, false, Ctx, string>;
-}
-
-type CC = {
-	b: (setB: (obj: { b: string }) => any) => any
-	a: (setA: (obj: { a: string }) => any) => any
-}
-type UseInAll = CC extends {
-	[key: string]: (set: (obj: infer P) => any) => any
-} | [(set: (obj: infer P) => any) => any] ? P : never
-
-type VT = {
-	readonly companyType: Column<"", false, {
-		defaultType: string;
-	}, string>;
-	readonly name: Column<"", false, { xxx: string }, string>;
-}
-
-type B1 = ({ x1: string } | { x2: string }) extends { x1: string } ? 1 : 2
-type B2 = ({ x1: string } | { x2: string }) extends infer R ? R extends { x1: string } ? 1 : 2 : never
-type VT2 = VT extends { [key: string]: Column<string, boolean, infer R, unknown> } ? R : 8
-
-const c = {} as VT[keyof VT]
-c.format((x, ctx) => { })
-
 executor.selectAll({ defaultType: '' }, view.skip(1).take(5).mapTo((e) => {
 	return e.base
 })).then((arr) => {
@@ -133,7 +104,7 @@ SqlExecutor.createPostgresExecutor({
 		console.log({ sql, params })
 		return []
 	}
-}).selectAll({ r: 1 }, view.skip(1).take(5).mapTo((e) => ({
+}).selectAll({ 'defaultType': '' }, view.skip(1).take(5).mapTo((e) => ({
 	...e.base,
 	...e.extra,
 })))

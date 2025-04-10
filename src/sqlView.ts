@@ -232,7 +232,8 @@ export class SqlView<const VT1 extends SqlViewTemplate<any>> {
 			return {
 				template: getTemplate(base.template, {
 					leftJoin: (withNull, view, getCondationExpr) => {
-						const proxy = proxyInstance<Parameters<typeof getCondationExpr>[0]>(tools, view._getInstance(tools), (c) => {
+						type R = Parameters<typeof getCondationExpr>[0]
+						const proxy = proxyInstance<R>(tools, view._getInstance(tools) as RuntimeInstance<R>, (c) => {
 							c[sym].withNull ||= withNull
 							return c
 						})
@@ -326,7 +327,8 @@ export class SqlView<const VT1 extends SqlViewTemplate<any>> {
 				view: SqlView<VT2>,
 				getCondationExpr: (extra: Relation<N, VT2>) => string,
 			): Relation<N, VT2> => {
-				const proxy = proxyInstance<Relation<N, VT2>>(tools, view._getInstance(tools), (c) => {
+				type R = Relation<N, VT2>
+				const proxy = proxyInstance(tools, view._getInstance(tools) as RuntimeInstance<R>, (c) => {
 					c[sym].withNull ||= withNull
 					return c
 				})
