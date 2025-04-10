@@ -45,9 +45,9 @@ export const proxyInstance = <VT extends SqlViewTemplate<any>>(tools: BuildTools
 			})
 			return outer
 		}) as VT,
-		decalerUsedExpr: (expr: string) => expr.split(`''""`).forEach((key, i) => {
+		decalerUsedExpr: (expr: string) => expr.split(`''""''""`).forEach((key, i) => {
 			if (i % 2 === 0) { return }
-			const e = info.get(`''""${key}''""`)
+			const e = info.get(`''""''""${key}''""''""`)
 			if (!e) { return }
 			if (e.used) { return }
 			e.used = true

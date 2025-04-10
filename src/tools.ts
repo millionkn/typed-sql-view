@@ -13,7 +13,7 @@ export const iterateTemplate = <Ctx>(template: SqlViewTemplate<Ctx>, cb: (column
 		return Object.fromEntries(Object.entries(template).map(([key, t]) => [key, iterateTemplate(t, cb)]))
 	}
 }
-export class Column<T extends string, N extends boolean, Ctx, R> {
+export class Column<T extends string = string, N extends boolean = boolean, Ctx = unknown, R = unknown> {
 	static create<Ctx = unknown>(expr: string) {
 		return new Column<"", true, Ctx, unknown>({
 			expr,
@@ -78,7 +78,7 @@ export class Column<T extends string, N extends boolean, Ctx, R> {
 	}
 }
 
-export type SqlViewTemplate<Ctx> = DeepTemplate<Column<string, boolean, Ctx, unknown>>
+export type SqlViewTemplate<Ctx = any> = DeepTemplate<Column<string, boolean, Ctx, unknown>>
 
 type _Relation<N extends boolean, VT extends readonly SqlViewTemplate<any>[] | { readonly [key: string]: SqlViewTemplate<any> }> = {
 	[key in keyof VT]
@@ -177,10 +177,10 @@ export class SqlBody {
 			buildResult.push(`order by ${this.opts.order.map((e) => `${e.expr} ${e.order}`).join(',')}`)
 		})
 		if (this.opts.skip) {
-			buildResult.push(`''""skip__${this.opts.skip}''""`)
+			buildResult.push(`''""''""skip__${this.opts.skip}''""''""`)
 		}
 		if (this.opts.take !== null) {
-			buildResult.push(`''""take__${this.opts.take}''""`)
+			buildResult.push(`''""''""take__${this.opts.take}''""''""`)
 		}
 		return buildResult.join(' ').trim()
 	}
@@ -238,10 +238,10 @@ export const createResolver = exec(() => {
 			createHolder: (getValue: () => T) => {
 				const key = `holder_${nsIndex}_${index++}`
 				saved.set(key, getValue)
-				return `''""${key}''""`
+				return `''""''""${key}''""''""`
 			},
 			resolve: (str: string, unResolved: (key: string) => string): Array<string | (() => T)> => {
-				return str.split(`''""`).map((str, i) => {
+				return str.split(`''""''""`).map((str, i) => {
 					if (i % 2 === 0) { return str }
 					const getValue = saved.get(str)
 					if (getValue) {
