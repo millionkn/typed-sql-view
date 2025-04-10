@@ -1,6 +1,6 @@
-import { SqlExecutor, createSqlView, } from '../src/index.js'
+import { SqlExecutor, SqlView, createSqlView, } from '../src/index.js'
 import z from 'zod'
-import { createColumn } from '../src/tools.js'
+import { Column, createColumn, SqlViewTemplate } from '../src/tools.js'
 
 const companyTableDefine = createSqlView(({ addFrom }) => {
 	const alias = addFrom(`"public"."tableName1"`)
@@ -8,8 +8,9 @@ const companyTableDefine = createSqlView(({ addFrom }) => {
 		companyId: createColumn(`"${alias}"."column_a"`).assert('', 'companyId').withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
 		companyType: createColumn(`"${alias}"."column_b"`)
 			.withNull(false)
+			.ctx<{ defaultType: string }>((c) => c)
 			//format支持异步
-			.format(async (raw) => z.string().parse(raw)),
+			.format(async (raw, ctx) => z.string().catch(ctx.defaultType).parse(raw)),
 		name: createColumn(`"${alias}"."column_c"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
 	}
 }).andWhere((e, param) => `${e.companyType} like ${param(`%type%`)}`)
@@ -91,8 +92,33 @@ const executor = SqlExecutor.createMySqlExecutor<{
 }
 */
 
+type Z<Ctx> = {
+	[key in string]: Column<string, false, Ctx, string>;
+}
 
-executor.selectAll(view.skip(1).take(5).mapTo((e) => {
+type CC = {
+	b: (setB: (obj: { b: string }) => any) => any
+	a: (setA: (obj: { a: string }) => any) => any
+}
+type UseInAll = CC extends {
+	[key: string]: (set: (obj: infer P) => any) => any
+} | [(set: (obj: infer P) => any) => any] ? P : never
+
+type VT = {
+	readonly companyType: Column<"", false, {
+		defaultType: string;
+	}, string>;
+	readonly name: Column<"", false, { xxx: string }, string>;
+}
+
+type B1 = ({ x1: string } | { x2: string }) extends { x1: string } ? 1 : 2
+type B2 = ({ x1: string } | { x2: string }) extends infer R ? R extends { x1: string } ? 1 : 2 : never
+type VT2 = VT extends { [key: string]: Column<string, boolean, infer R, unknown> } ? R : 8
+
+const c = {} as VT[keyof VT]
+c.format((x, ctx) => { })
+
+executor.selectAll({ defaultType: '' }, view.skip(1).take(5).mapTo((e) => {
 	return e.base
 })).then((arr) => {
 	const typeCheck = arr satisfies {
@@ -107,7 +133,7 @@ SqlExecutor.createPostgresExecutor({
 		console.log({ sql, params })
 		return []
 	}
-}).selectAll(view.skip(1).take(5).mapTo((e) => ({
+}).selectAll({ r: 1 }, view.skip(1).take(5).mapTo((e) => ({
 	...e.base,
 	...e.extra,
 })))
