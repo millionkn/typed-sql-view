@@ -4,7 +4,7 @@ export const exec = <T>(fun: () => T): T => fun()
 
 export type DeepTemplate<I> = I | (readonly [...DeepTemplate<I>[]]) | { readonly [key: string]: DeepTemplate<I> }
 
-export const iterateTemplate = <Ctx>(template: SqlViewTemplate<Ctx>, cb: (column: Column<string, boolean, Ctx, unknown>) => unknown): unknown => {
+export const iterateTemplate = (template: SqlViewTemplate, cb: (column: Column<string, boolean, unknown>) => unknown): unknown => {
 	if (template instanceof Column) {
 		return cb(template)
 	} else if (template instanceof Array) {
@@ -13,9 +13,9 @@ export const iterateTemplate = <Ctx>(template: SqlViewTemplate<Ctx>, cb: (column
 		return Object.fromEntries(Object.entries(template).map(([key, t]) => [key, iterateTemplate(t, cb)]))
 	}
 }
-export class Column<T extends string = string, N extends boolean = boolean, Ctx = unknown, R = unknown> {
-	static create<Ctx = unknown>(expr: string) {
-		return new Column<"", true, Ctx, unknown>({
+export class Column<T extends string = string, N extends boolean = boolean, R = unknown> {
+	static create(expr: string) {
+		return new Column<"", true, unknown>({
 			expr,
 			assert: '',
 			format: async (raw) => raw,
@@ -25,14 +25,14 @@ export class Column<T extends string = string, N extends boolean = boolean, Ctx 
 	[sym]: {
 		expr: string,
 		withNull: N,
-		format: (raw: unknown, ctx: Ctx) => Promise<R>,
+		format: (raw: unknown) => Promise<R>,
 		assert: T,
 	}
 	private constructor(
 		opts: {
 			expr: string,
 			withNull: N,
-			format: (raw: unknown, ctx: Ctx) => Promise<R>,
+			format: (raw: unknown) => Promise<R>,
 			assert: T,
 		}
 	) {
@@ -41,25 +41,17 @@ export class Column<T extends string = string, N extends boolean = boolean, Ctx 
 
 
 	withNull<const N extends boolean>(value: N) {
-		return new Column<T, N, Ctx, R>({
+		return new Column<T, N, R>({
 			...this[sym],
 			withNull: value,
 		})
 	}
 
-	format = <R2>(value: (value: R, ctx: Ctx extends infer C ? C : never) => Async<R2>): Column<T, N, Ctx, R2> => {
+	format = <R2>(value: (value: R) => Async<R2>): Column<T, N, R2> => {
 		const format = this[sym].format
-		return new Column<T, N, Ctx, R2>({
+		return new Column<T, N, R2>({
 			...this[sym],
-			format: async (raw, ctx) => value(await format(raw, ctx), ctx as any)
-		})
-	}
-
-	ctx<C>(getCtx: (cur: C) => Ctx) {
-		const format = this[sym].format
-		return new Column<T, N, C, R>({
-			...this[sym],
-			format: async (raw, ctx) => await format(raw, getCtx(ctx))
+			format: async (raw) => value(await format(raw))
 		})
 	}
 
@@ -67,7 +59,7 @@ export class Column<T extends string = string, N extends boolean = boolean, Ctx 
 		if (this[sym].assert !== pre) {
 			throw new Error(`assert tag '${pre}',but saved is '${this[sym].assert}'`)
 		}
-		return new Column<T2, N, Ctx, R>({
+		return new Column<T2, N, R>({
 			...this[sym],
 			assert: cur,
 		})
@@ -78,19 +70,19 @@ export class Column<T extends string = string, N extends boolean = boolean, Ctx 
 	}
 }
 
-export type SqlViewTemplate<Ctx = any> = DeepTemplate<Column<string, boolean, Ctx, unknown>>
+export type SqlViewTemplate = DeepTemplate<Column<string, boolean, unknown>>
 
-type _Relation<N extends boolean, VT extends readonly SqlViewTemplate<any>[] | { readonly [key: string]: SqlViewTemplate<any> }> = {
+type _Relation<N extends boolean, VT extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }> = {
 	[key in keyof VT]
-	: VT[key] extends readonly SqlViewTemplate<any>[] | { readonly [key: string]: SqlViewTemplate<any> } ? _Relation<N, VT[key]>
-	: VT[key] extends Column<infer T, infer N2, infer Ctx, infer R> ? Column<T, (N2 & N) extends true ? true : boolean, Ctx, R>
+	: VT[key] extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate } ? _Relation<N, VT[key]>
+	: VT[key] extends Column<infer T, infer N2, infer R> ? Column<T, (N2 & N) extends true ? true : boolean, R>
 	: never
 }
 
-export type Relation<N extends boolean, VT extends SqlViewTemplate<any>> = N extends false ? VT
-	: VT extends Column<infer T, infer N2, infer Ctx, infer R> ? Column<T, (N2 & N) extends true ? true : boolean, Ctx, R>
-	: VT extends readonly SqlViewTemplate<any>[] ? _Relation<N, VT>
-	: VT extends { readonly [key: string]: SqlViewTemplate<any> } ? _Relation<N, VT>
+export type Relation<N extends boolean, VT extends SqlViewTemplate> = N extends false ? VT
+	: VT extends Column<infer T, infer N2, infer R> ? Column<T, (N2 & N) extends true ? true : boolean, R>
+	: VT extends readonly SqlViewTemplate[] ? _Relation<N, VT>
+	: VT extends { readonly [key: string]: SqlViewTemplate } ? _Relation<N, VT>
 	: never
 
 
