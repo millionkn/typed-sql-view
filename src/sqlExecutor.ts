@@ -61,6 +61,13 @@ export class SqlExecutor {
 		})
 
 		const paramArr = [] as unknown[]
+		const setParam = exec(() => {
+			let index = 0
+			return (value: unknown) => resolver.createHolder(() => {
+				paramArr[index] = value
+				return this.opts.adapter.paramHolder(index++)
+			})
+		})
 		const viewResult = view.buildSelectAll({ order: flag.order }, {
 			createHolder: () => {
 				let getValue = (): string => { throw new Error(`expr:${expr}`) }
@@ -74,12 +81,11 @@ export class SqlExecutor {
 				let index = 0
 				return () => resolver.createHolder(() => `table_${index++}`)
 			}),
-			setParam: exec(() => {
-				let index = 0
-				return (value) => resolver.createHolder(() => {
-					paramArr[index] = value
-					return this.opts.adapter.paramHolder(index++)
-				})
+			setParam: Object.assign((value: unknown) => setParam(value), {
+				arr: (value: Iterable<unknown>) => {
+					const str = Array.prototype.map.call(value, (v) => setParam(v)).join(',')
+					return str.length === 0 ? `(null)` : `(${str})`
+				}
 			}),
 		})
 		return {

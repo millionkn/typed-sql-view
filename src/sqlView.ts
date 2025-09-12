@@ -1,4 +1,4 @@
-import { BuildTools, Column, Relation, SqlBody, SqlViewTemplate, iterateTemplate, hasOneOf, pickConfig, sym } from "./tools.js"
+import { BuildTools, Column, Relation, SqlBody, SqlViewTemplate, iterateTemplate, hasOneOf, pickConfig, sym, SetParam } from "./tools.js"
 
 export type BuildFlag = {
 	order: boolean,
@@ -151,12 +151,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 
 	andWhere(getCondation: (
 		template: VT1,
-		param: {
-			(value: unknown): string
-			arr: {
-				(value: unknown[]): string
-			}
-		},
+		param: SetParam,
 		tools: BuildTools,
 	) => null | false | undefined | string): SqlView<VT1> {
 		return new SqlView((tools) => {
@@ -166,12 +161,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 				template: instance.template,
 				decalerUsedExpr: instance.decalerUsedExpr,
 				getSqlBody: (flag) => {
-					let condationExpr = getCondation(instance.template, Object.assign((value: unknown) => tools.setParam(value), {
-						arr: (value: Iterable<unknown>) => {
-							const str = Array.prototype.map.call(value, (v) => tools.setParam(v)).join(',')
-							return str.length === 0 ? `(null)` : `(${str})`
-						}
-					}), tools)
+					let condationExpr = getCondation(instance.template, tools.setParam, tools)
 					if (condationExpr) { condationExpr = condationExpr.trim() }
 					if (!condationExpr) {
 						return instance.getSqlBody({
@@ -194,13 +184,13 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 	}
 
 	groupBy<const VT extends SqlViewTemplate>(
-		getKeyTemplate: (vt: VT1) => SqlViewTemplate,
-		getTemplate: (vt: VT1) => VT,
+		getKeyTemplate: (vt: VT1, param: SetParam) => SqlViewTemplate,
+		getTemplate: (vt: VT1, param: SetParam) => VT,
 	): SqlView<VT> {
 		return new SqlView((tools) => {
 			const instance = proxyInstance<VT1>(tools, this._getInstance(tools), (c) => c)
-			const keys = getKeyTemplate(instance.template)
-			const content = getTemplate(instance.template)
+			const keys = getKeyTemplate(instance.template, tools.setParam)
+			const content = getTemplate(instance.template, tools.setParam)
 			return {
 				template: content,
 				decalerUsedExpr: instance.decalerUsedExpr,
@@ -220,7 +210,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 	}
 
 	joinLazy<const VT extends SqlViewTemplate>(getTemplate: (e: VT1, opts: {
-		leftJoin: <N extends boolean, VT extends SqlViewTemplate>(withNull: N, view: SqlView<VT>, getCondationExpr: (t: Relation<N, VT>) => string) => Relation<N, VT>,
+		leftJoin: <N extends boolean, VT extends SqlViewTemplate>(withNull: N, view: SqlView<VT>, getCondationExpr: (t: Relation<N, VT>, param: SetParam) => string) => Relation<N, VT>,
 	}) => VT): SqlView<VT> {
 		return new SqlView((tools) => {
 			const base = proxyInstance<VT1>(tools, this._getInstance(tools), (c) => c)
@@ -238,7 +228,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 						})
 						extraArr.push({
 							instance: proxy,
-							getCondationExpr: () => getCondationExpr(proxy.template)
+							getCondationExpr: () => getCondationExpr(proxy.template, tools.setParam)
 						})
 						return proxy.template
 					},
@@ -310,8 +300,8 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 	}
 
 	join<const VT extends SqlViewTemplate>(getTemplate: (e: VT1, opts: {
-		leftJoin: <N extends boolean, VT extends SqlViewTemplate>(withNull: N, view: SqlView<VT>, getCondationExpr: (t: Relation<N, VT>) => string) => Relation<N, VT>,
-		innerJoin: <VT extends SqlViewTemplate>(view: SqlView<VT>, getCondationExpr: (t: VT) => string) => VT,
+		leftJoin: <N extends boolean, VT extends SqlViewTemplate>(withNull: N, view: SqlView<VT>, getCondationExpr: (t: Relation<N, VT>, param: SetParam) => string) => Relation<N, VT>,
+		innerJoin: <VT extends SqlViewTemplate>(view: SqlView<VT>, getCondationExpr: (t: VT, param: SetParam) => string) => VT,
 	}) => VT): SqlView<VT> {
 		return new SqlView((tools) => {
 			const base = proxyInstance<VT1>(tools, this._getInstance(tools), (c) => c)
@@ -324,7 +314,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 				mode: "left" | "inner",
 				withNull: N,
 				view: SqlView<VT2>,
-				getCondationExpr: (extra: Relation<N, VT2>) => string,
+				getCondationExpr: (extra: Relation<N, VT2>, param: SetParam) => string,
 			): Relation<N, VT2> => {
 				type R = Relation<N, VT2>
 				const proxy = proxyInstance(tools, view._getInstance(tools) as RuntimeInstance<R>, (c) => {
@@ -334,7 +324,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 				extraArr.push({
 					mode,
 					instance: proxy,
-					getCondationExpr: () => getCondationExpr(proxy.template)
+					getCondationExpr: () => getCondationExpr(proxy.template, tools.setParam)
 				})
 				return proxy.template
 			}
@@ -415,6 +405,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 
 	mapTo<const VT extends SqlViewTemplate>(getTemplate: (e: VT1, opts: {
 		decalreUsed: (expr: string | Column<'', boolean, unknown>) => void,
+		param: SetParam,
 	}) => VT): SqlView<VT> {
 		return new SqlView((tools) => {
 			const base = this._getInstance(tools)
@@ -423,6 +414,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 					decalreUsed: (expr) => {
 						base.decalerUsedExpr(expr.toString())
 					},
+					param: tools.setParam,
 				}),
 				decalerUsedExpr: base.decalerUsedExpr,
 				getSqlBody: base.getSqlBody,
@@ -446,7 +438,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 
 	order(
 		order: 'asc' | 'desc',
-		getExpr: (template: VT1) => false | null | undefined | string | Column<'', boolean, unknown>,
+		getExpr: (template: VT1, param: SetParam) => false | null | undefined | string | Column<'', boolean, unknown>,
 	): SqlView<VT1> {
 		return new SqlView((tools) => {
 			const instance = proxyInstance<VT1>(tools, this._getInstance(tools), (c) => c)
@@ -460,7 +452,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 							bracketIf: () => false,
 						})
 					}
-					let expr = getExpr(instance.template)?.toString()
+					let expr = getExpr(instance.template, tools.setParam)?.toString()
 					if (expr) { expr = expr.trim() }
 					if (!expr) {
 						return instance.getSqlBody({

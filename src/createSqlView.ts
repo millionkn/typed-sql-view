@@ -26,12 +26,7 @@ export function createSqlView<const VT extends SqlViewTemplate>(
 			skip: 0,
 		})
 		const template = getTemplate({
-			param: Object.assign((value: unknown) => ctx.setParam(value), {
-				arr: (value: Iterable<unknown>) => {
-					const str = Array.prototype.map.call(value, (v) => ctx.setParam(v)).join(',')
-					return str.length === 0 ? `(null)` : `(${str})`
-				}
-			}),
+			param: ctx.setParam,
 			addFrom: (expr) => {
 				const alias = ctx.genAlias()
 				sqlBody.opts.from.push({

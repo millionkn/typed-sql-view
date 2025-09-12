@@ -93,9 +93,17 @@ export type Adapter = {
 	paramHolder: (index: number) => string,
 }
 
+
+export type SetParam = {
+	(value: unknown): string
+	arr: {
+		(value: unknown[]): string
+	}
+}
+
 export type BuildTools = {
 	genAlias: () => string,
-	setParam: (value: unknown) => string,
+	setParam: SetParam,
 	createHolder: () => {
 		expr: string,
 		replaceWith: (expr: string) => void,
