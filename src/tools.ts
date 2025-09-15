@@ -4,7 +4,7 @@ export const exec = <T>(fun: () => T): T => fun()
 
 export type DeepTemplate<I> = I | (readonly [...DeepTemplate<I>[]]) | { readonly [key: string]: DeepTemplate<I> }
 
-export const iterateTemplate = (template: SqlViewTemplate, cb: (column: Column<string, boolean, unknown>) => unknown): unknown => {
+export const iterateTemplate = (template: SqlViewTemplate, cb: (column: Column<boolean, unknown>) => unknown): unknown => {
 	if (template instanceof Column) {
 		return cb(template)
 	} else if (template instanceof Array) {
@@ -13,11 +13,10 @@ export const iterateTemplate = (template: SqlViewTemplate, cb: (column: Column<s
 		return Object.fromEntries(Object.entries(template).map(([key, t]) => [key, iterateTemplate(t, cb)]))
 	}
 }
-export class Column<T extends string = string, N extends boolean = boolean, R = unknown> {
+export class Column<N extends boolean = boolean, R = unknown> {
 	static create(expr: string) {
-		return new Column<"", true, unknown>({
+		return new Column<true, unknown>({
 			expr,
-			assert: '',
 			format: async (raw) => raw,
 			withNull: true,
 		})
@@ -26,14 +25,12 @@ export class Column<T extends string = string, N extends boolean = boolean, R = 
 		expr: string,
 		withNull: N,
 		format: (raw: unknown) => Promise<R>,
-		assert: T,
 	}
 	private constructor(
 		opts: {
 			expr: string,
 			withNull: N,
 			format: (raw: unknown) => Promise<R>,
-			assert: T,
 		}
 	) {
 		this[sym] = opts
@@ -41,27 +38,17 @@ export class Column<T extends string = string, N extends boolean = boolean, R = 
 
 
 	withNull<const N extends boolean>(value: N) {
-		return new Column<T, N, R>({
+		return new Column<N, R>({
 			...this[sym],
 			withNull: value,
 		})
 	}
 
-	format = <R2>(value: (value: R) => Async<R2>): Column<T, N, R2> => {
+	format = <R2>(value: (value: R) => Async<R2>): Column<N, R2> => {
 		const format = this[sym].format
-		return new Column<T, N, R2>({
+		return new Column<N, R2>({
 			...this[sym],
 			format: async (raw) => value(await format(raw))
-		})
-	}
-
-	assert<T2 extends string>(pre: T, cur: T2) {
-		if (this[sym].assert !== pre) {
-			throw new Error(`assert tag '${pre}',but saved is '${this[sym].assert}'`)
-		}
-		return new Column<T2, N, R>({
-			...this[sym],
-			assert: cur,
 		})
 	}
 
@@ -70,17 +57,17 @@ export class Column<T extends string = string, N extends boolean = boolean, R = 
 	}
 }
 
-export type SqlViewTemplate = DeepTemplate<Column<string, boolean, unknown>>
+export type SqlViewTemplate = DeepTemplate<Column<boolean, unknown>>
 
 type _Relation<N extends boolean, VT extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }> = {
 	[key in keyof VT]
 	: VT[key] extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate } ? _Relation<N, VT[key]>
-	: VT[key] extends Column<infer T, infer N2, infer R> ? Column<T, (N2 & N) extends true ? true : boolean, R>
+	: VT[key] extends Column<infer N2, infer R> ? Column<N2 & N, R>
 	: never
 }
 
 export type Relation<N extends boolean, VT extends SqlViewTemplate> = N extends false ? VT
-	: VT extends Column<infer T, infer N2, infer R> ? Column<T, (N2 & N) extends true ? true : boolean, R>
+	: VT extends Column<infer N2, infer R> ? Column<N2 & N, R>
 	: VT extends readonly SqlViewTemplate[] ? _Relation<N, VT>
 	: VT extends { readonly [key: string]: SqlViewTemplate } ? _Relation<N, VT>
 	: never
@@ -156,9 +143,16 @@ export class SqlBody {
 		if (this.opts.from.length === 0) { return '' }
 		const buildResult: string[] = []
 		buildResult.push(`${this.opts.from.map((e) => `${e.expr} ${e.alias}`).join(',')}`)
+		const aliasOnLeft = new Set<string>()
 		this.opts.join.forEach((join) => {
 			const condation = join.condation
-			buildResult.push(`${join.type} join ${join.expr} ${join.alias} ${condation.length === 0 ? '' : `on ${condation}`}`)
+			const isLateral = -1 !== join.expr
+				.split(`''""''""`)
+				.findIndex((sym, index) => index % 2 === 0 && aliasOnLeft.has(sym))
+			let expr = join.expr
+			if (isLateral && !expr.startsWith(`(`)) { expr = `(${expr})` }
+			buildResult.push(`${join.type} join${isLateral ? ' lateral ' : ' '}${expr} ${join.alias} ${condation.length === 0 ? '' : `on ${condation}`}`)
+			aliasOnLeft.add(join.alias)
 		})
 		exec(() => {
 			if (this.opts.where.length === 0) { return }

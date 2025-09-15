@@ -37,59 +37,10 @@ export class SqlExecutor {
 		view: SqlView<VT>,
 		flag: BuildFlag,
 	) {
-		const resolver = exec(() => {
-			const resolver = createResolver<string>()
-			return {
-				createHolder: (getValue: () => string) => {
-					let saved = null as null | string
-					return resolver.createHolder(() => saved ||= getValue())
-				},
-				resolve: (str: string) => {
-					return resolver.resolve(str, (key) => {
-						if (key.startsWith(`take__`)) {
-							const value = Number(key.slice(`take__`.length))
-							return this.opts.adapter.take(value)
-						}
-						if (key.startsWith(`skip__`)) {
-							const value = Number(key.slice(`skip__`.length))
-							return this.opts.adapter.skip(value)
-						}
-						throw new Error()
-					}).map((e) => typeof e === 'string' ? e : e()).join('')
-				}
-			}
-		})
 
-		const paramArr = [] as unknown[]
-		const setParam = exec(() => {
-			let index = 0
-			return (value: unknown) => resolver.createHolder(() => {
-				paramArr[index] = value
-				return this.opts.adapter.paramHolder(index++)
-			})
-		})
-		const viewResult = view.buildSelectAll({ order: flag.order }, {
-			createHolder: () => {
-				let getValue = (): string => { throw new Error(`expr:${expr}`) }
-				const expr = resolver.createHolder(() => getValue())
-				return {
-					expr,
-					replaceWith: (expr) => getValue = () => resolver.resolve(expr)
-				}
-			},
-			genAlias: exec(() => {
-				let index = 0
-				return () => resolver.createHolder(() => `table_${index++}`)
-			}),
-			setParam: Object.assign((value: unknown) => setParam(value), {
-				arr: (value: Iterable<unknown>) => {
-					const str = Array.prototype.map.call(value, (v) => setParam(v)).join(',')
-					return str.length === 0 ? `(null)` : `(${str})`
-				}
-			}),
-		})
+		const viewResult = view.buildSelectAll(flag, this.opts.adapter)
 		return {
-			sql: resolver.resolve(viewResult.sql),
+			sql: viewResult.sql,
 			paramArr: paramArr,
 			rawFormatter: viewResult.rawFormatter,
 		}

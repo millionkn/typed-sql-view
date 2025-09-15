@@ -1,22 +1,53 @@
-import { SqlExecutor, SqlView, createSqlView, } from '../src/index.js'
+import { SqlExecutor, createSqlView, createSqlViewFromTable, } from '../src/index.js'
 import z from 'zod'
-import { Column, createColumn, SqlViewTemplate } from '../src/tools.js'
+import { createColumn } from '../src/tools.js'
 
-const companyTableDefine = createSqlView(({ addFrom }) => {
-	const alias = addFrom(`"public"."tableName1"`)
+
+const vvv = createSqlViewFromTable(sql`public.tableName1`, (rootAlias) => {
+	const companyId = createColumn(sql`"${rootAlias}"."column_a"`).withNull(false)
 	return {
-		companyId: createColumn(`"${alias}"."column_a"`).assert('', 'companyId').withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
-		companyType: createColumn(`"${alias}"."column_b"`)
+		companyId: companyId.format((raw) => z.string().parse(raw)),
+		companyIdIsTarget: createColumn(sql`${companyId} = ${'123456'}`).withNull(false)
+	}
+})
+
+const companyTableDefine = createSqlViewFromTable(sql`"public"."tableName1"`, (rootAlias) => {
+	return {
+		companyId: createColumn(sql`"${rootAlias}"."column_a"`)
+			.withNull(false)
+			.format((raw) => z.string().parse(raw)),
+		companyType: createColumn(sql`"${rootAlias}"."column_b"`)
 			.withNull(false)
 			//format支持异步
 			.format(async (raw) => z.string().parse(raw)),
-		name: createColumn(`"${alias}"."column_c"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
+		name: createColumn(sql`"${rootAlias}"."column_c"`)
+			.withNull(false)
+			.format((raw) => z.string().parse(raw)),
 	}
-}).andWhere((e, param) => `${e.companyType} like ${param(`%type%`)}`)
+}).andWhere((e) => sql`${e.companyType} like ${`%type%`}`)
+	.andWhere((e) => sql`exists (${vvv
+		.andWhere((e2) => sql`${e2.companyId} = ${e.companyId}`)
+		.pipe((view) => view)}
+	)`)
+	.lateralJoin('lazy left with null', (e) => {
+		return createSqlViewFromTable(sql`public.tableName2`, (rootAlias) => {
+			return {
+				companyId: createColumn(sql`"${rootAlias}"."column_a"`).withNull(false)
+			}
+		}).andWhere((e2) => sql`${e2.companyId} = ${e.base.companyId}`)
+	})
+	.on((e) => sql`${e.base.companyId} = ${e.extra.companyId}`)
+	.mapTo((e) => {
+		return {
+			...e.base,
+			xx: createColumn(sql`${e.base.companyId}`)
+		}
+	})
+	.decalreUsed((e) => e)
 
 const personTableDefine = createSqlView(({ addFrom }) => {
 	const alias = addFrom(`"public"."tableName2"`)
-	const companyId = createColumn(`"${alias}"."column_a"`).assert('', `companyId`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw))
+	const companyId = createColumn(`"${alias}"."column_a"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw))
 	const identify = createColumn(`"${alias}"."column_b"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw))
 	return {
 		companyId,
@@ -26,10 +57,35 @@ const personTableDefine = createSqlView(({ addFrom }) => {
 		//可以延迟设置 'format' 与 'withNull'
 		scoreValue: createColumn(`"${alias}"."column_c"`),
 		name: createColumn(`"${alias}"."column_d"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
+		jsonTag: createColumn(`"${alias}"."column_e"`).withNull(false),
 	}
 })
 
-const view = personTableDefine
+const _view = personTableDefine
+	.join((e, { leftJoin }) => {
+		const otherTable = leftJoin(false, personTableDefine, (t) => `${t.identify} = ${e.identify}`)
+		return {
+			...e,
+			flatedTag: otherTable.jsonTag
+		}
+	})
+await SqlExecutor.createPostgresExecutor({
+	runner: async (sql, params) => {
+		console.log({ sql, params })
+		return []
+	}
+}).selectAll(_view)
+
+class BB {
+	id!: string
+	toString() {
+		return ''
+	}
+}
+
+type V = `${BB}${string}`
+
+const view = _view
 	//根据业务要求,知道person最多有一个company,无论是否join 'company表'都不会影响'person表'的数量
 	//所以可以使用lazy,如果后面没有用到,就不进行join
 	//ps:left和inner都会立刻join,因为表的数量可能会被影响
@@ -75,7 +131,7 @@ const view = personTableDefine
 const executor = SqlExecutor.createMySqlExecutor({
 	runner: async (sql, params) => {
 		// 使用其他工具进行query
-		console.log(sql, params)
+		// console.log(sql, params)
 		return []
 	}
 })
@@ -100,7 +156,7 @@ executor.selectAll(view.skip(1).take(5).mapTo((e) => {
 
 SqlExecutor.createPostgresExecutor({
 	runner: async (sql, params) => {
-		console.log({ sql, params })
+		// console.log({ sql, params })
 		return []
 	}
 }).selectAll(view.skip(1).take(5).mapTo((e) => ({

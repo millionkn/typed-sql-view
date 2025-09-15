@@ -41,7 +41,7 @@ export function createSqlView<const VT extends SqlViewTemplate>(
 				sqlBody.opts.join.push({
 					type: 'inner',
 					alias,
-					expr: raw,
+					expr: raw.trim(),
 					condation: condation(alias),
 				})
 				return alias
@@ -51,7 +51,7 @@ export function createSqlView<const VT extends SqlViewTemplate>(
 				sqlBody.opts.join.push({
 					type: 'left',
 					alias,
-					expr: raw,
+					expr: raw.trim(),
 					condation: condation(alias),
 				})
 				return alias

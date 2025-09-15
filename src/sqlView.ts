@@ -1,4 +1,4 @@
-import { BuildTools, Column, Relation, SqlBody, SqlViewTemplate, iterateTemplate, hasOneOf, pickConfig, sym, SetParam } from "./tools.js"
+import { BuildTools, Column, Relation, SqlBody, SqlViewTemplate, iterateTemplate, hasOneOf, pickConfig, sym, SetParam, exec, createResolver, Adapter } from "./tools.js"
 
 export type BuildFlag = {
 	order: boolean,
@@ -16,17 +16,17 @@ export type SelectResult<VT extends SqlViewTemplate> = VT extends readonly [] ? 
 	? [SelectResult<X>, ...SelectResult<Arr>]
 	: VT extends readonly (infer X extends SqlViewTemplate)[]
 	? SelectResult<X>[]
-	: VT extends Column<string, infer N, infer R>
+	: VT extends Column<infer N, infer R>
 	? (true extends N ? null : never) | R
 	: VT extends { [key: string]: SqlViewTemplate }
 	? { -readonly [key in keyof VT]: SelectResult<VT[key]> }
 	: never
 
-export const proxyInstance = <VT extends SqlViewTemplate>(tools: BuildTools, instance: RuntimeInstance<VT>, cb: (column: Column<string, boolean, unknown>) => Column<string, boolean, unknown>) => {
+export const proxyInstance = <VT extends SqlViewTemplate>(tools: BuildTools, instance: RuntimeInstance<VT>, cb: (column: Column<boolean, unknown>) => Column<boolean, unknown>) => {
 	const info: Map<string, {
 		used: boolean,
-		inner: Column<string, boolean, unknown>,
-		outer: Column<string, boolean, unknown>,
+		inner: Column<boolean, unknown>,
+		outer: Column<boolean, unknown>,
 		replaceWith: (expr: string) => void,
 	}> = new Map()
 	let instanceUsed = false
@@ -101,9 +101,59 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 
 	buildSelectAll(
 		flag: BuildFlag,
-		tools: BuildTools,
+		adapter: Adapter,
 	) {
-		const viewInstance = this._getInstance(tools)
+		const resolver = exec(() => {
+			const resolver = createResolver<string>()
+			return {
+				createHolder: (getValue: () => string) => {
+					let saved = null as null | string
+					return resolver.createHolder(() => saved ||= getValue())
+				},
+				resolve: (str: string) => {
+					return resolver.resolve(str, (key) => {
+						if (key.startsWith(`take__`)) {
+							const value = Number(key.slice(`take__`.length))
+							return adapter.take(value)
+						}
+						if (key.startsWith(`skip__`)) {
+							const value = Number(key.slice(`skip__`.length))
+							return adapter.skip(value)
+						}
+						throw new Error()
+					}).map((e) => typeof e === 'string' ? e : e()).join('')
+				}
+			}
+		})
+
+		const paramArr = [] as unknown[]
+		const setParam = exec(() => {
+			let index = 0
+			return (value: unknown) => resolver.createHolder(() => {
+				paramArr[index] = value
+				return adapter.paramHolder(index++)
+			})
+		})
+		const viewInstance = this._getInstance({
+			createHolder: () => {
+				let getValue = (): string => { throw new Error(`expr:${expr}`) }
+				const expr = resolver.createHolder(() => getValue())
+				return {
+					expr,
+					replaceWith: (expr) => getValue = () => resolver.resolve(expr)
+				}
+			},
+			genAlias: exec(() => {
+				let index = 0
+				return () => resolver.createHolder(() => `table_${index++}`)
+			}),
+			setParam: Object.assign((value: unknown) => setParam(value), {
+				arr: (value: Iterable<unknown>) => {
+					const str = Array.prototype.map.call(value, (v) => setParam(v)).join(',')
+					return str.length === 0 ? `(null)` : `(${str})`
+				}
+			}),
+		})
 		const selectTarget: Map<string, {
 			alias: string,
 			format: (raw: { [key: string]: unknown }) => Promise<unknown>,
@@ -131,7 +181,8 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 			.getSqlBody(flag)
 			.buildSqlStr([...selectTarget].map(([expr, { alias }]) => ({ expr, alias })))
 		return {
-			sql: rawSql,
+			sql: resolver.resolve(rawSql),
+			paramArr,
 			rawFormatter: async (selectResult: { [key: string]: unknown }) => {
 				const loadingArr: Promise<unknown>[] = new Array()
 				const resultMapper = new Map<string, unknown>()
@@ -404,7 +455,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 	}
 
 	mapTo<const VT extends SqlViewTemplate>(getTemplate: (e: VT1, opts: {
-		decalreUsed: (expr: string | Column<'', boolean, unknown>) => void,
+		decalreUsed: (expr: string | Column<boolean, unknown>) => void,
 		param: SetParam,
 	}) => VT): SqlView<VT> {
 		return new SqlView((tools) => {
@@ -438,7 +489,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 
 	order(
 		order: 'asc' | 'desc',
-		getExpr: (template: VT1, param: SetParam) => false | null | undefined | string | Column<'', boolean, unknown>,
+		getExpr: (template: VT1, param: SetParam) => false | null | undefined | string | Column<boolean, unknown>,
 	): SqlView<VT1> {
 		return new SqlView((tools) => {
 			const instance = proxyInstance<VT1>(tools, this._getInstance(tools), (c) => c)
