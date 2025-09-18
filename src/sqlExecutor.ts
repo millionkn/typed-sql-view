@@ -8,6 +8,7 @@ export class SqlExecutor {
 		return new SqlExecutor({
 			runner: (sql, params) => opts.runner(sql, params),
 			adapter: {
+				aliasAs: (alias) => `as \`${alias}\``,
 				paramHolder: () => `?`,
 				delimitedIdentifiers: (identifier) => `\`${identifier}\``,
 				skip: (v) => `offset ${v}`,
@@ -21,6 +22,7 @@ export class SqlExecutor {
 		return new SqlExecutor({
 			runner: (sql, params) => opts.runner(sql, params),
 			adapter: {
+				aliasAs: (alias) => `as "${alias}"`,
 				paramHolder: (index) => `$${index + 1}`,
 				delimitedIdentifiers: (identifier) => `"${identifier}"`,
 				skip: (v) => `offset ${v}`,

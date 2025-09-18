@@ -27,6 +27,7 @@ const companyTableDefine = createSqlViewFromTable(sql`"public"."tableName1"`, (r
 }).andWhere((e) => sql`${e.companyType} like ${`%type%`}`)
 	.andWhere((e) => sql`exists (${vvv
 		.andWhere((e2) => sql`${e2.companyId} = ${e.companyId}`)
+		.skip(1)
 		.mapTo(() => [])}
 	)`)
 	.lateralJoin('lazy left with null', (e) => {

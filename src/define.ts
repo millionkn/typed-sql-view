@@ -1,6 +1,4 @@
-import { exec } from "./tools.js"
-
-
+import { Async, exec } from "./tools.js"
 
 export type DeepTemplate<I> = I | (readonly [...DeepTemplate<I>[]]) | { readonly [key: string]: DeepTemplate<I> }
 
@@ -14,103 +12,112 @@ export const iterateTemplate = (template: SqlViewTemplate, cb: (column: Column<b
 	}
 }
 
-export type RawSqlSegment = {
-	strings: TemplateStringsArray,
-	values: SegmentValue[],
-}
-
-export abstract class SqlSegmentLike {
-	protected abstract asSegment: () => RawSqlSegment
-	static asSegment(target: SqlSegmentLike) {
-		return target.asSegment()
-	}
-}
-
-export class SqlSegment extends SqlSegmentLike {
-	protected asSegment: () => RawSqlSegment
-	constructor(
-		opts: RawSqlSegment
-	) {
-		super()
-		this.asSegment = () => opts
-	}
-}
-
-
+type _ParamType = string | number | boolean | null | Date
+type ParamType = _ParamType | Array<_ParamType>
 
 type SegmentValue =
-	| Array<SegmentValue>
-	| string | number | boolean | null | Date
-	| SqlSegmentLike
+	| ParamType
+	| SqlSegmentOwner
 
-function parseSegment(value: SegmentValue, buildCtx: BuildTools): string {
+export type SqlSegmentData = {
+	strings: string[],
+	values: SegmentValue[],
+}
+export type SyntaxAdapter = {
+	skip: (value: number) => string,
+	take: (value: number) => string,
+	paramHolder: (index: number) => string,
+	delimitedIdentifiers: (identifier: string) => string,
+	aliasAs: (alias: string, type: 'table' | 'column') => string,
+}
+
+export type BuildSqlHelper = {
+	skip: (value: number) => string,
+	take: (value: number) => string,
+	setParam: (value: ParamType) => string,
+	delimitedIdentifiers: (identifier: string) => string,
+	aliasAs: (alias: string, type: 'table' | 'column') => string,
+}
+
+export abstract class SqlSegmentOwner {
+	protected abstract getSegmentData: () => SqlSegmentData
+	static getSegmentData(target: SqlSegmentOwner) {
+		return target.getSegmentData()
+	}
+}
+
+function parseSegment(value: SegmentValue, helper: BuildSqlHelper) {
 	if (value === null) {
 		return 'null'
 	} else if (value instanceof Array) {
 		if (value.length === 0) {
 			return `(null)`
 		} else {
-			return `(${value.map((v) => parseSegment(v, buildCtx)).join(',')})`
+			return `(${value.map((v) => parseSegment(v, helper) satisfies string).join(',')})`
 		}
 	} else if (value instanceof SqlSegmentLike) {
-		return value[sym2].parseSegment(buildCtx)
+		return SqlSegmentLike.buildSqlStr(value, helper)
 	} else if (typeof value === 'string') {
-		return buildCtx.setParam(value)
+		return helper.setParam(value)
 	} else if (typeof value === 'number') {
-		return buildCtx.setParam(value)
+		return helper.setParam(value)
 	} else if (typeof value === 'boolean') {
-		return buildCtx.setParam(value)
+		return helper.setParam(value)
 	} else if (value instanceof Date) {
-		return buildCtx.setParam(value)
+		return helper.setParam(value)
 	} else {
 		throw new Error(`unknown value:${value satisfies never}`)
 	}
 }
 
-export function sql(strings: TemplateStringsArray, ...values: SegmentValue[]) {
-	return new SqlSegment({ strings, values })
+export class SqlSegmentWrapper extends SqlSegmentOwner {
+	constructor(
+		private segmentData: SqlSegmentData
+	) {
+		super()
+	}
+	protected getSegmentData = () => {
+		return this.segmentData
+	}
 }
 
-export class Column<N extends boolean = boolean, R = unknown> extends SqlSegmentLike {
 
-	static create(sqlSegment: SqlSegment) {
 
-		SqlSegmentLike.asSegment(sqlSegment)
 
-		return new Column<true, unknown>(sqlSegment[sym2](), {
-			format: async (raw) => raw,
-			withNull: true,
-		})
-	}
-	[sym]: {
-		withNull: N,
-		format: (raw: unknown) => Promise<R>,
-	}
-	private constructor(
-		rawSqlSegment: RawSqlSegment,
-		opts: {
+
+
+
+export function sql(strings: TemplateStringsArray, ...values: SegmentValue[]) {
+	return new SqlSegmentWrapper({ strings: Array.from(strings), values })
+}
+
+export class Column<N extends boolean = boolean, R = unknown> extends SqlSegmentOwner {
+	protected getSegmentData = () => SqlSegmentOwner.getSegmentData(this.opts.sqlSegment)
+	constructor(
+		protected opts: {
+			sqlSegment: SqlSegmentOwner,
 			withNull: N,
 			format: (raw: unknown) => Promise<R>,
 		}
 	) {
 		super()
-		this[sym2] = () => rawSqlSegment
-		this[sym] = opts
+		this.opts = opts
 	}
 
 
 	withNull<const N extends boolean>(value: N) {
-		return new Column<N, R>(this[sym2](), {
-			...this[sym],
+		return new Column<N, R>({
+			sqlSegment: this.opts.sqlSegment,
+			format: this.opts.format,
 			withNull: value,
 		})
 	}
 
 	format = <R2>(value: (value: R) => Async<R2>): Column<N, R2> => {
-		const format = this[sym].format
-		return new Column<N, R2>(this[sym2](), {
-			...this[sym],
-			format: async (raw) => value(await format(raw))
+		return new Column<N, R2>({
+			sqlSegment: this.opts.sqlSegment,
+			format: async (raw) => value(await this.opts.format(raw)),
+			withNull: this.opts.withNull,
 		})
 	}
 }
@@ -131,47 +138,27 @@ export type Relation<N extends boolean, VT extends SqlViewTemplate> = N extends 
 	: never
 
 
-
-export type Adapter = {
-	skip: (value: number) => string,
-	take: (value: number) => string,
-	paramHolder: (index: number) => string,
-	delimitedIdentifiers: (identifier: string) => string,
-	aliasAs: (alias: string, type: 'table' | 'column') => string,
-}
-
-export type BuildTools = {
-	genAlias: () => SqlSegment,
-	setParam: (value: unknown) => string,
-	createHolder: () => {
-		expr: string,
-		replaceWith: (expr: string) => void,
-	},
-}
-
-
-
 export class SelectSqlStruct {
 	constructor(
 		public opts: {
-			from: {
-				alias: () => string,
-				expr: RawSqlSegment,
-			}[],
-			join: {
+			from: Array<{
+				alias: SqlSegmentOwner,
+				expr: (helper: BuildSqlHelper) => SqlSegmentOwner,
+			}>,
+			join: Array<{
 				type: 'left' | 'inner',
 				lateral: boolean,
-				alias: RawSqlSegment,
-				expr: RawSqlSegment,
-				condation: RawSqlSegment,
-			}[],
-			where: Array<RawSqlSegment>,
-			groupBy: Array<RawSqlSegment>,
-			having: Array<RawSqlSegment>,
-			order: {
+				alias: SqlSegmentOwner,
+				expr: (helper: BuildSqlHelper) => SqlSegmentOwner,
+				condation: (helper: BuildSqlHelper) => SqlSegmentOwner,
+			}>,
+			where: Array<(helper: BuildSqlHelper) => SqlSegmentOwner>,
+			groupBy: Array<(helper: BuildSqlHelper) => SqlSegmentOwner>,
+			having: Array<(helper: BuildSqlHelper) => SqlSegmentOwner>,
+			order: Array<{
 				order: 'asc' | 'desc',
-				expr: RawSqlSegment,
-			}[],
+				expr: (helper: BuildSqlHelper) => SqlSegmentOwner,
+			}>,
 			take: null | number,
 			skip: number,
 		}
@@ -190,61 +177,67 @@ export class SelectSqlStruct {
 		return state
 	}
 
-	private buildSqlBodySourceStr(adapter: Adapter) {
+	private buildSqlBodySourceStr(helper: BuildSqlHelper) {
 		if (this.opts.from.length === 0) { return '' }
 		const buildResult: string[] = []
-		buildResult.push(`${this.opts.from.map((e) => `${e.expr} ${e.alias()}`).join(',')}`)
+		this.opts.from.forEach((e) => {
+			buildResult.push(`${SqlSegmentLike.buildSqlStr(e.expr, helper) satisfies string} ${SqlSegmentLike.buildSqlStr(e.alias, helper) satisfies string}`)
+		})
+		buildResult.push(`${this.opts.from.map((e) => `${SqlSegmentLike.buildSqlStr(e.expr, helper) satisfies string} ${SqlSegmentLike.buildSqlStr(e.alias, helper) satisfies string}`).join(',')}`)
 		this.opts.join.forEach((join) => {
 			buildResult.push([
 				join.type,
 				'join',
 				join.lateral ? 'lateral' : '',
-				join.expr,
-				join.alias,
-				join.condation.length === 0 ? '' : `on ${join.condation}`,
+				SqlSegmentLike.buildSqlStr(join.expr, helper) satisfies string,
+				SqlSegmentLike.buildSqlStr(join.alias, helper) satisfies string,
+				exec(() => {
+					const r = SqlSegmentLike.buildSqlStr(join.condation, helper)
+					return r.length === 0 ? '' : `on ${r}`
+				}) satisfies string,
 			].filter((v) => v !== '').join(' '))
 		})
 		exec(() => {
 			if (this.opts.where.length === 0) { return }
-			buildResult.push(`where ${this.opts.where.join(' and ')}`)
+			buildResult.push(`where ${this.opts.where.map((e) => SqlSegmentLike.buildSqlStr(e, helper) satisfies string).join(' and ')}`)
 		})
 		exec(() => {
 			if (this.opts.groupBy.length === 0) { return }
-			buildResult.push(`group by ${this.opts.groupBy.join(',')}`)
+			buildResult.push(`group by ${this.opts.groupBy.map((e) => SqlSegmentLike.buildSqlStr(e, helper) satisfies string).join(',')}`)
 		})
 		exec(() => {
 			if (this.opts.having.length === 0) { return }
-			buildResult.push(`having ${this.opts.having.join(' and ')}`)
+			buildResult.push(`having ${this.opts.having.map((e) => SqlSegmentLike.buildSqlStr(e, helper) satisfies string).join(' and ')}`)
 		})
 		exec(() => {
 			if (this.opts.order.length === 0) { return }
-			buildResult.push(`order by ${this.opts.order.map((e) => `${e.expr} ${e.order} NULLS FIRST`).join(',')}`)
+			buildResult.push(`order by ${this.opts.order.map((e) => `${SqlSegmentLike.buildSqlStr(e.expr, helper) satisfies string} ${e.order satisfies 'asc' | 'desc'} NULLS FIRST`).join(',')}`)
 		})
 		if (this.opts.skip) {
-			buildResult.push(adapter.skip(this.opts.skip).trim())
+			buildResult.push(helper.skip(this.opts.skip).trim())
 		}
 		if (this.opts.take !== null) {
-			buildResult.push(adapter.take(this.opts.take).trim())
+			buildResult.push(helper.take(this.opts.take).trim())
 		}
 		return buildResult.join(' ').trim()
 	}
-	buildSqlStr(adapter: Adapter, selectTarget: { expr: string, alias: string }[]) {
-		const source = this.buildSqlBodySourceStr(adapter)
+	buildSqlStr(helper: BuildSqlHelper, selectTarget: { expr: SqlSegment, alias: SqlSegment }[]) {
+		const source = this.buildSqlBodySourceStr(helper) satisfies string
 		return [
-			`select ${buildSqlBodySelectStr(adapter, selectTarget)}`,
+			`select ${buildSqlBodySelectStr(helper, selectTarget) satisfies string}`,
 			!source ? '' : 'from',
 			source,
 		].filter((v) => v !== '').join(' ')
 	}
-	bracket(opts: {
-		selectTarget: { expr: string, alias: string }[],
-		tableAlias: string,
+	bracket(helper: BuildSqlHelper, opts: {
+		selectTarget: { expr: SqlSegment, alias: SqlSegment }[],
+		tableAlias: SqlSegment,
 	}) {
 		return new SelectSqlStruct({
 			from: [
 				{
 					alias: opts.tableAlias,
-					expr: `(${this.buildSqlStr(opts.selectTarget)})`,
+					expr: (helper) => new SqlSegment({ strings: [`(${this.buildSqlStr(helper, opts.selectTarget) satisfies string})`], values: [] }),
 				}
 			],
 			join: [],
@@ -261,40 +254,16 @@ export class SelectSqlStruct {
 export type SqlState = 'leftJoin' | 'innerJoin' | 'where' | 'groupBy' | 'having' | 'take' | 'skip' | 'order'
 
 
-export function buildSqlBodySelectStr(adapter: Adapter, selectTarget: { expr: string, alias: string }[]) {
+export function buildSqlBodySelectStr(helper: BuildSqlHelper, selectTarget: { expr: SqlSegment, alias: SqlSegment }[]) {
 	return [...selectTarget]
-		.map(({ expr, alias }) => `${expr} ${adapter.aliasAs(alias, 'column')}`)
+		.map(({ expr, alias }) => `${SqlSegmentLike.buildSqlStr(expr, helper) satisfies string} ${SqlSegmentLike.buildSqlStr(alias, helper) satisfies string}`)
 		.join(',') ?? '1'
 }
 
 
-
-
-export const createResolver = exec(() => {
-	let _nsIndex = 0
-	return <T>() => {
-		const nsIndex = _nsIndex++
-		let index = 0
-		const saved = new Map<string, () => T>()
-		return {
-			createHolder: (getValue: () => T) => {
-				const key = `holder_${nsIndex}_${index++}`
-				saved.set(key, getValue)
-				return `''""''""${key}''""''""`
-			},
-			resolve: (str: string, unResolved: (key: string) => string): Array<string | (() => T)> => {
-				return str.split(`''""''""`).map((str, i) => {
-					if (i % 2 === 0) { return str }
-					const getValue = saved.get(str)
-					if (getValue) {
-						return getValue
-					} else {
-						return unResolved(str)
-					}
-				})
-			}
-		}
-	}
+export const createColumn = (sqlWrapper: SqlSegment) => new Column<true, unknown>({
+	sqlSegment: sqlWrapper,
+	format: async (raw) => raw,
+	withNull: true,
 })
-export const createColumn = (sqlWrapper: SqlSegment) => Column.create(sqlWrapper)
-export type Async<T> = T | PromiseLike<T>
+

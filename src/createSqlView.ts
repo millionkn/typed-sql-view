@@ -1,17 +1,18 @@
-import { SqlViewTemplate, SelectSqlStruct, SqlSegment, sym2 } from "./define.js"
+import { SqlViewTemplate, SelectSqlStruct, SqlSegment } from "./define.js"
 import { SqlView } from "./sqlView.js"
 
 export function createSqlView<const VT extends SqlViewTemplate>(
 	from: SqlSegment,
 	getTemplate: (rootAlias: SqlSegment) => VT
 ) {
-	return new SqlView((ctx) => {
-		const rootAlias = ctx.genAlias()
 
+	return new SqlView(() => {
+		const rootAlias = ctx.genAlias()
+		const template = getTemplate(rootAlias)
 		const sqlBody = new SelectSqlStruct({
 			from: [{
 				alias: rootAlias,
-				expr: from[sym2](),
+				expr: from,
 			}],
 			join: [],
 			where: [],
@@ -21,11 +22,10 @@ export function createSqlView<const VT extends SqlViewTemplate>(
 			take: null,
 			skip: 0,
 		})
-		const template = getTemplate(rootAlias)
+
 		return {
 			template,
-			decalerUsedExpr: (expr) => { },
-			getSqlBody: ({ order }) => {
+			getSqlStruct: ({ order }) => {
 				if (!order) { sqlBody.opts.order = [] }
 				return sqlBody
 			},

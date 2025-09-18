@@ -1,4 +1,4 @@
-import { BuildTools, Column, Relation, SelectSqlStruct, SqlViewTemplate, iterateTemplate, hasOneOf, pickConfig, sym, SetParam, exec, createResolver, Adapter, SqlSegment, RawSqlSegment, sym2, SqlSegmentLike } from "./define.js"
+import { Column, Relation, SelectSqlStruct, SqlViewTemplate, iterateTemplate, SqlSegmentData, SyntaxAdapter, } from "./define.js"
 
 export type BuildFlag = {
 	order: boolean,
@@ -7,7 +7,6 @@ export type BuildFlag = {
 
 export type RuntimeInstance<VT extends SqlViewTemplate> = {
 	template: VT,
-	decalerUsedExpr: (expr: string) => void,
 	getSqlStruct: (flag: BuildFlag) => SelectSqlStruct,
 }
 
@@ -45,7 +44,7 @@ export const proxyInstance = <VT extends SqlViewTemplate>(tools: BuildTools, ins
 			})
 			return outer
 		}) as VT,
-		decalerUsedExpr: (expr: RawSqlSegment) => expr.split(`''""''""`).forEach((key, i) => {
+		decalerUsedExpr: (expr: SqlSegmentData) => expr.split(`''""''""`).forEach((key, i) => {
 			if (i % 2 === 0) { return }
 			const e = info.get(`''""''""${key}''""''""`)
 			if (!e) { return }
@@ -89,13 +88,10 @@ export const proxyInstance = <VT extends SqlViewTemplate>(tools: BuildTools, ins
 	}
 }
 
-export class SqlView<const VT1 extends SqlViewTemplate> extends SqlSegmentLike {
+export class SqlView<const VT1 extends SqlViewTemplate> {
 	constructor(
 		private _getInstance: () => RuntimeInstance<VT1>,
-	) {
-		super()
-
-	}
+	) { }
 
 	pipe<R>(op: (self: this) => R): R {
 		return op(this)
@@ -103,16 +99,13 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends SqlSegmentLike {
 
 	buildSelectAll(
 		flag: BuildFlag,
-		adapter: Adapter,
+		syntaxAdapter: SyntaxAdapter,
 	) {
 
 		const paramArr = [] as unknown[]
 		const viewInstance = this._getInstance()
-
-		const selectTarget: Map<string, {
-			alias: string,
-			format: (raw: { [key: string]: unknown }) => Promise<unknown>,
-		}> = new Map()
+		const aliasMapper = new Map<string, string>()
+		const formatterMapper = new Map<string, (raw: { [key: string]: unknown }) => Promise<unknown>>()
 
 		iterateTemplate(viewInstance.template, (c) => {
 			viewInstance.decalerUsedExpr(c)
