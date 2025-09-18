@@ -1,6 +1,6 @@
 export { createSqlView } from './createSqlView.js'
 export { SqlView } from './sqlView.js'
 export type { SelectResult } from './sqlView.js'
-export type { Adapter, SqlState, SqlViewTemplate } from './tools.js'
-export { Column, SqlBody, createColumn } from './tools.js'
+export type { Adapter, SqlState, SqlViewTemplate } from './define.js'
+export { Column, SelectSqlStruct as SqlBody, createColumn } from './define.js'
 export { SqlExecutor } from './sqlExecutor.js'

@@ -1,4 +1,4 @@
-import { BuildTools, Column, Relation, SqlBody, SqlViewTemplate, iterateTemplate, hasOneOf, pickConfig, sym, SetParam, exec, createResolver, Adapter } from "./tools.js"
+import { BuildTools, Column, Relation, SelectSqlStruct, SqlViewTemplate, iterateTemplate, hasOneOf, pickConfig, sym, SetParam, exec, createResolver, Adapter, SqlSegment, RawSqlSegment, sym2, SqlSegmentLike } from "./define.js"
 
 export type BuildFlag = {
 	order: boolean,
@@ -8,7 +8,7 @@ export type BuildFlag = {
 export type RuntimeInstance<VT extends SqlViewTemplate> = {
 	template: VT,
 	decalerUsedExpr: (expr: string) => void,
-	getSqlBody: (flag: BuildFlag) => SqlBody,
+	getSqlStruct: (flag: BuildFlag) => SelectSqlStruct,
 }
 
 export type SelectResult<VT extends SqlViewTemplate> = VT extends readonly [] ? []
@@ -45,7 +45,7 @@ export const proxyInstance = <VT extends SqlViewTemplate>(tools: BuildTools, ins
 			})
 			return outer
 		}) as VT,
-		decalerUsedExpr: (expr: string) => expr.split(`''""''""`).forEach((key, i) => {
+		decalerUsedExpr: (expr: RawSqlSegment) => expr.split(`''""''""`).forEach((key, i) => {
 			if (i % 2 === 0) { return }
 			const e = info.get(`''""''""${key}''""''""`)
 			if (!e) { return }
@@ -56,9 +56,9 @@ export const proxyInstance = <VT extends SqlViewTemplate>(tools: BuildTools, ins
 		}),
 		getSqlBody: (opts: {
 			flag: BuildFlag,
-			bracketIf: (sqlBody: SqlBody) => boolean
+			bracketIf: (sqlBody: SelectSqlStruct) => boolean
 		}) => {
-			let sqlBody = instance.getSqlBody(opts.flag)
+			let sqlBody = instance.getSqlStruct(opts.flag)
 			if (!opts.bracketIf(sqlBody)) {
 				info.forEach((v) => {
 					if (!v.used) { return }
@@ -89,10 +89,12 @@ export const proxyInstance = <VT extends SqlViewTemplate>(tools: BuildTools, ins
 	}
 }
 
-export class SqlView<const VT1 extends SqlViewTemplate> {
+export class SqlView<const VT1 extends SqlViewTemplate> extends SqlSegmentLike {
 	constructor(
-		private _getInstance: (tools: BuildTools) => RuntimeInstance<VT1>,
+		private _getInstance: () => RuntimeInstance<VT1>,
 	) {
+		super()
+
 	}
 
 	pipe<R>(op: (self: this) => R): R {
@@ -103,83 +105,21 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 		flag: BuildFlag,
 		adapter: Adapter,
 	) {
-		const resolver = exec(() => {
-			const resolver = createResolver<string>()
-			return {
-				createHolder: (getValue: () => string) => {
-					let saved = null as null | string
-					return resolver.createHolder(() => saved ||= getValue())
-				},
-				resolve: (str: string) => {
-					return resolver.resolve(str, (key) => {
-						if (key.startsWith(`take__`)) {
-							const value = Number(key.slice(`take__`.length))
-							return adapter.take(value)
-						}
-						if (key.startsWith(`skip__`)) {
-							const value = Number(key.slice(`skip__`.length))
-							return adapter.skip(value)
-						}
-						throw new Error()
-					}).map((e) => typeof e === 'string' ? e : e()).join('')
-				}
-			}
-		})
 
 		const paramArr = [] as unknown[]
-		const setParam = exec(() => {
-			let index = 0
-			return (value: unknown) => resolver.createHolder(() => {
-				paramArr[index] = value
-				return adapter.paramHolder(index++)
-			})
-		})
-		const viewInstance = this._getInstance({
-			createHolder: () => {
-				let getValue = (): string => { throw new Error(`expr:${expr}`) }
-				const expr = resolver.createHolder(() => getValue())
-				return {
-					expr,
-					replaceWith: (expr) => getValue = () => resolver.resolve(expr)
-				}
-			},
-			genAlias: exec(() => {
-				let index = 0
-				return () => resolver.createHolder(() => `table_${index++}`)
-			}),
-			setParam: Object.assign((value: unknown) => setParam(value), {
-				arr: (value: Iterable<unknown>) => {
-					const str = Array.prototype.map.call(value, (v) => setParam(v)).join(',')
-					return str.length === 0 ? `(null)` : `(${str})`
-				}
-			}),
-		})
+		const viewInstance = this._getInstance()
+
 		const selectTarget: Map<string, {
 			alias: string,
 			format: (raw: { [key: string]: unknown }) => Promise<unknown>,
 		}> = new Map()
 
 		iterateTemplate(viewInstance.template, (c) => {
-			const opts = c[sym]
-			if (selectTarget.has(opts.expr)) { return }
-			viewInstance.decalerUsedExpr(opts.expr)
-			const alias = `value_${selectTarget.size}`
-			if (opts.withNull) {
-				selectTarget.set(opts.expr, {
-					alias,
-					format: async (raw) => raw[alias] === null ? null : opts.format(raw[alias]),
-				})
-			} else {
-				selectTarget.set(opts.expr, {
-					alias,
-					format: async (raw) => opts.format(raw[alias]),
-				})
-			}
-
+			viewInstance.decalerUsedExpr(c)
 		})
 		const rawSql = viewInstance
-			.getSqlBody(flag)
-			.buildSqlStr([...selectTarget].map(([expr, { alias }]) => ({ expr, alias })))
+			.getSqlStruct(flag)
+			.buildSqlStr(adapter, [...selectTarget].map(([expr, { alias }]) => ({ expr, alias })))
 		return {
 			sql: resolver.resolve(rawSql),
 			paramArr,
@@ -202,25 +142,22 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 
 	andWhere(getCondation: (
 		template: VT1,
-		param: SetParam,
-		tools: BuildTools,
-	) => null | false | undefined | string): SqlView<VT1> {
-		return new SqlView((tools) => {
+	) => null | false | undefined | '' | SqlSegment): SqlView<VT1> {
+		return new SqlView(() => {
 			const instance = proxyInstance<VT1>(tools, this._getInstance(tools), (c) => c)
 
 			return {
 				template: instance.template,
 				decalerUsedExpr: instance.decalerUsedExpr,
 				getSqlBody: (flag) => {
-					let condationExpr = getCondation(instance.template, tools.setParam, tools)
-					if (condationExpr) { condationExpr = condationExpr.trim() }
+					let condationExpr = getCondation(instance.template)
 					if (!condationExpr) {
 						return instance.getSqlBody({
 							flag,
 							bracketIf: () => false,
 						})
 					}
-					instance.decalerUsedExpr(condationExpr)
+					instance.decalerUsedExpr(condationExpr[sym2]())
 					const sqlBody = instance.getSqlBody({
 						flag,
 						bracketIf: (sqlBody) => hasOneOf(sqlBody.state(), ['take', 'skip'])
@@ -300,7 +237,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 						const condationExpr = getCondationExpr()
 						base.decalerUsedExpr(condationExpr)
 						arr.slice(0, index + 1).forEach((e) => e.instance.decalerUsedExpr(condationExpr))
-						let body = null as null | SqlBody
+						let body = null as null | SelectSqlStruct
 						return {
 							condationExpr,
 							getBody: () => body ||= instance.getSqlBody({
@@ -315,7 +252,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 						flag,
 						bracketIf: (sqlBody) => hasOneOf(sqlBody.state(), ['groupBy', 'having', 'order', 'skip', 'take']),
 					})
-					return new SqlBody({
+					return new SelectSqlStruct({
 						from: baseBody.opts.from,
 						join: [
 							...baseBody.opts.join,
@@ -400,7 +337,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 						const condationExpr = getCondationExpr()
 						base.decalerUsedExpr(condationExpr)
 						arr.slice(0, index + 1).forEach((e) => e.instance.decalerUsedExpr(condationExpr))
-						let body = null as null | SqlBody
+						let body = null as null | SelectSqlStruct
 						return {
 							condationExpr,
 							mode,
@@ -419,7 +356,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 						flag,
 						bracketIf: (sqlBody) => hasOneOf(sqlBody.state(), ['groupBy', 'having', 'order', 'skip', 'take']),
 					})
-					return new SqlBody({
+					return new SelectSqlStruct({
 						from: baseBody.opts.from,
 						join: [
 							...baseBody.opts.join,
@@ -468,12 +405,12 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 					param: tools.setParam,
 				}),
 				decalerUsedExpr: base.decalerUsedExpr,
-				getSqlBody: base.getSqlBody,
+				getSqlBody: base.getSqlStruct,
 			}
 		})
 	}
 
-	bracketIf(condation: (sqlBody: SqlBody) => boolean) {
+	bracketIf(condation: (sqlBody: SelectSqlStruct) => boolean) {
 		return new SqlView((tools) => {
 			const instance = proxyInstance<VT1>(tools, this._getInstance(tools), (c) => c)
 			return {
@@ -534,7 +471,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 				template: instance.template,
 				decalerUsedExpr: instance.decalerUsedExpr,
 				getSqlBody: (flag) => {
-					const sqlBody = instance.getSqlBody({
+					const sqlBody = instance.getSqlStruct({
 						...flag,
 						order: true,
 					})
@@ -555,7 +492,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> {
 				template: instance.template,
 				decalerUsedExpr: instance.decalerUsedExpr,
 				getSqlBody: (flag) => {
-					const sqlBody = instance.getSqlBody({
+					const sqlBody = instance.getSqlStruct({
 						...flag,
 						order: true,
 					})

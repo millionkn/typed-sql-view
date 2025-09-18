@@ -1,4 +1,4 @@
-import { exec, SqlViewTemplate, Adapter, createResolver, hasOneOf, Column } from "./tools.js";
+import { SqlViewTemplate, Adapter, Column } from "./define.js";
 import { BuildFlag, SelectResult, SqlView } from "./sqlView.js";
 
 export class SqlExecutor {
@@ -9,6 +9,7 @@ export class SqlExecutor {
 			runner: (sql, params) => opts.runner(sql, params),
 			adapter: {
 				paramHolder: () => `?`,
+				delimitedIdentifiers: (identifier) => `\`${identifier}\``,
 				skip: (v) => `offset ${v}`,
 				take: (v) => `limit ${v}`,
 			},
@@ -21,6 +22,7 @@ export class SqlExecutor {
 			runner: (sql, params) => opts.runner(sql, params),
 			adapter: {
 				paramHolder: (index) => `$${index + 1}`,
+				delimitedIdentifiers: (identifier) => `"${identifier}"`,
 				skip: (v) => `offset ${v}`,
 				take: (v) => `limit ${v}`,
 			},
@@ -32,19 +34,6 @@ export class SqlExecutor {
 			runner: (sql: string, params: unknown[]) => Promise<{ [key: string]: unknown }[]>
 		}
 	) { }
-
-	private rawSelectAll<VT extends SqlViewTemplate>(
-		view: SqlView<VT>,
-		flag: BuildFlag,
-	) {
-
-		const viewResult = view.buildSelectAll(flag, this.opts.adapter)
-		return {
-			sql: viewResult.sql,
-			paramArr: paramArr,
-			rawFormatter: viewResult.rawFormatter,
-		}
-	}
 
 
 	aggrateView<VT1 extends SqlViewTemplate, VT2 extends SqlViewTemplate>(

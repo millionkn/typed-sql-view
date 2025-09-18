@@ -1,22 +1,18 @@
-import { SqlViewTemplate, SqlBody } from "./tools.js"
+import { SqlViewTemplate, SelectSqlStruct, SqlSegment, sym2 } from "./define.js"
 import { SqlView } from "./sqlView.js"
 
 export function createSqlView<const VT extends SqlViewTemplate>(
-	getTemplate: (opts: {
-		param: {
-			(value: any): string
-			arr: (value: any[]) => string
-		},
-		addFrom: (expr: string) => string,
-		leftJoin: (expr: string, condation: (alias: string) => string) => string,
-		innerJoin: (expr: string, condation: (alias: string) => string) => string,
-		andWhere: (condation: string) => void,
-		addOrder: (order: 'asc' | 'desc', expr: string) => void,
-	}) => VT
+	from: SqlSegment,
+	getTemplate: (rootAlias: SqlSegment) => VT
 ) {
 	return new SqlView((ctx) => {
-		const sqlBody = new SqlBody({
-			from: [],
+		const rootAlias = ctx.genAlias()
+
+		const sqlBody = new SelectSqlStruct({
+			from: [{
+				alias: rootAlias,
+				expr: from[sym2](),
+			}],
 			join: [],
 			where: [],
 			groupBy: [],
@@ -25,41 +21,7 @@ export function createSqlView<const VT extends SqlViewTemplate>(
 			take: null,
 			skip: 0,
 		})
-		const template = getTemplate({
-			param: ctx.setParam,
-			addFrom: (expr) => {
-				const alias = ctx.genAlias()
-				sqlBody.opts.from.push({
-					alias,
-					expr,
-				})
-				return alias
-			},
-			andWhere: (c) => sqlBody.opts.where.push(c),
-			innerJoin: (raw, condation) => {
-				const alias = ctx.genAlias()
-				sqlBody.opts.join.push({
-					type: 'inner',
-					alias,
-					expr: raw.trim(),
-					condation: condation(alias),
-				})
-				return alias
-			},
-			leftJoin: (raw, condation) => {
-				const alias = ctx.genAlias()
-				sqlBody.opts.join.push({
-					type: 'left',
-					alias,
-					expr: raw.trim(),
-					condation: condation(alias),
-				})
-				return alias
-			},
-			addOrder: (order, expr) => {
-				sqlBody.opts.order.push({ order, expr })
-			}
-		})
+		const template = getTemplate(rootAlias)
 		return {
 			template,
 			decalerUsedExpr: (expr) => { },

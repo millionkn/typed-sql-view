@@ -1,6 +1,6 @@
 import { SqlExecutor, createSqlView, createSqlViewFromTable, } from '../src/index.js'
 import z from 'zod'
-import { createColumn } from '../src/tools.js'
+import { createColumn } from '../src/define.js'
 
 
 const vvv = createSqlViewFromTable(sql`public.tableName1`, (rootAlias) => {
@@ -27,7 +27,7 @@ const companyTableDefine = createSqlViewFromTable(sql`"public"."tableName1"`, (r
 }).andWhere((e) => sql`${e.companyType} like ${`%type%`}`)
 	.andWhere((e) => sql`exists (${vvv
 		.andWhere((e2) => sql`${e2.companyId} = ${e.companyId}`)
-		.pipe((view) => view)}
+		.mapTo(() => [])}
 	)`)
 	.lateralJoin('lazy left with null', (e) => {
 		return createSqlViewFromTable(sql`public.tableName2`, (rootAlias) => {
@@ -75,15 +75,6 @@ await SqlExecutor.createPostgresExecutor({
 		return []
 	}
 }).selectAll(_view)
-
-class BB {
-	id!: string
-	toString() {
-		return ''
-	}
-}
-
-type V = `${BB}${string}`
 
 const view = _view
 	//根据业务要求,知道person最多有一个company,无论是否join 'company表'都不会影响'person表'的数量
