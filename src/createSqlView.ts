@@ -1,32 +1,46 @@
-import { SqlViewTemplate, SelectSqlStruct, SqlSegment } from "./define.js"
+import { SqlViewTemplate, SelectSqlStruct, Column, Segment, Holder, sql } from "./define.js"
 import { SqlView } from "./sqlView.js"
+import { exec } from "./tools.js"
+
+
 
 export function createSqlView<const VT extends SqlViewTemplate>(
-	from: SqlSegment,
-	getTemplate: (rootAlias: SqlSegment) => VT
+	from: Segment,
+	getTemplate: (createColumn: (segment: Segment) => Column<boolean, unknown>, rootAlias: Segment) => VT
 ) {
-
 	return new SqlView(() => {
-		const rootAlias = ctx.genAlias()
-		const template = getTemplate(rootAlias)
-		const sqlBody = new SelectSqlStruct({
-			from: [{
-				alias: rootAlias,
-				expr: from,
-			}],
-			join: [],
-			where: [],
-			groupBy: [],
-			having: [],
-			order: [],
-			take: null,
-			skip: 0,
-		})
-
+		const holder = new Holder(exec(() => {
+			const key = {}
+			return (helper) => helper.fetchColumnAlias(key)
+		}))
+		const template = getTemplate((segment) => {
+			return new Column({
+				withNull: true,
+				format: async (raw) => raw,
+				builderCtx: Segment.createBuilderCtx(segment),
+			})
+		}, sql`${holder}`)
+		const fromCtx = Segment.createBuilderCtx(from)
 		return {
 			template,
-			getSqlStruct: ({ order }) => {
-				if (!order) { sqlBody.opts.order = [] }
+			declareUsed: () => {
+				fromCtx.emitUsed()
+			},
+			build: (flag) => {
+				const sqlBody = new SelectSqlStruct({
+					from: {
+						expr: fromCtx.buildExpr(),
+						alias: holder,
+					},
+					join: [],
+					where: [],
+					groupBy: [],
+					having: [],
+					order: [],
+					take: null,
+					skip: 0,
+				})
+				if (!flag.order) { sqlBody.opts.order = [] }
 				return sqlBody
 			},
 		}

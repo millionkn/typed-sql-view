@@ -16,9 +16,8 @@
 	"devDependencies": {
 		"@types/node": "^20.11.27",
 		"cross-env": "^7.0.3",
-		"execa": "^8.0.1",
 		"ts-node": "^10.9.2",
-		"typescript": "^5.4.2",
+		"typescript": "^5.9.2",
 		"zod": "^3.22.4"
 	},
 	"files": [

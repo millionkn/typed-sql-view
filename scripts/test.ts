@@ -1,17 +1,16 @@
 import { SqlExecutor, createSqlView, createSqlViewFromTable, } from '../src/index.js'
 import z from 'zod'
-import { createColumn } from '../src/define.js'
 
 
-const vvv = createSqlViewFromTable(sql`public.tableName1`, (rootAlias) => {
-	const companyId = createColumn(sql`"${rootAlias}"."column_a"`).withNull(false)
+const vvv = createSqlViewFromTable(sql`public.tableName1`, (column, rootAlias) => {
+	const companyId = column(sql`"${rootAlias}"."column_a"`).withNull(false)
 	return {
 		companyId: companyId.format((raw) => z.string().parse(raw)),
-		companyIdIsTarget: createColumn(sql`${companyId} = ${'123456'}`).withNull(false)
+		companyIdIsTarget: column(sql`${companyId} = ${'123456'}`).withNull(false)
 	}
 })
 
-const companyTableDefine = createSqlViewFromTable(sql`"public"."tableName1"`, (rootAlias) => {
+const companyTableDefine = createSqlViewFromTable((sql) => sql`"public"."tableName1"`, (sql, rootAlias) => {
 	return {
 		companyId: createColumn(sql`"${rootAlias}"."column_a"`)
 			.withNull(false)
@@ -24,24 +23,23 @@ const companyTableDefine = createSqlViewFromTable(sql`"public"."tableName1"`, (r
 			.withNull(false)
 			.format((raw) => z.string().parse(raw)),
 	}
-}).andWhere((e) => sql`${e.companyType} like ${`%type%`}`)
+}).andWhere((sql, e) => sql`${e.companyType} like ${`%type%`}`)
 	.andWhere((e) => sql`exists (${vvv
 		.andWhere((e2) => sql`${e2.companyId} = ${e.companyId}`)
 		.skip(1)
 		.mapTo(() => [])}
 	)`)
 	.lateralJoin('lazy left with null', (e) => {
-		return createSqlViewFromTable(sql`public.tableName2`, (rootAlias) => {
+		return createSqlViewFromTable(sql`public.tableName2`, (sql, rootAlias) => {
 			return {
 				companyId: createColumn(sql`"${rootAlias}"."column_a"`).withNull(false)
 			}
-		}).andWhere((e2) => sql`${e2.companyId} = ${e.base.companyId}`)
-	})
-	.on((e) => sql`${e.base.companyId} = ${e.extra.companyId}`)
-	.mapTo((e) => {
+		}).andWhere((sql, e2) => sql`${e2.companyId} = ${e.base.companyId}`)
+	}, (sql, e) => sql`${e.base.companyId} = ${e.extra.companyId}`)
+	.mapTo((e, column) => {
 		return {
 			...e.base,
-			xx: createColumn(sql`${e.base.companyId}`)
+			xx: column(sql`${e.base.companyId}`)
 		}
 	})
 	.decalreUsed((e) => e)
@@ -63,13 +61,8 @@ const personTableDefine = createSqlView(({ addFrom }) => {
 })
 
 const _view = personTableDefine
-	.join((e, { leftJoin }) => {
-		const otherTable = leftJoin(false, personTableDefine, (t) => `${t.identify} = ${e.identify}`)
-		return {
-			...e,
-			flatedTag: otherTable.jsonTag
-		}
-	})
+	.join('left with null', personTableDefine, (e) => `${t.base.identify} = ${this.extra.identify}`)
+
 await SqlExecutor.createPostgresExecutor({
 	runner: async (sql, params) => {
 		console.log({ sql, params })

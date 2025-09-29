@@ -1,4 +1,4 @@
-import { SqlViewTemplate, Adapter, Column } from "./define.js";
+import { SqlViewTemplate, Column } from "./define.js";
 import { BuildFlag, SelectResult, SqlView } from "./sqlView.js";
 
 export class SqlExecutor {
