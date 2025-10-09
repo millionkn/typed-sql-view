@@ -1,10 +1,11 @@
 import { SqlView } from "./sqlView.js"
 import { Async, connectWith, exec } from "./tools.js"
 
+export const sym = Symbol()
 
 export type DeepTemplate<I> = I | (readonly [...DeepTemplate<I>[]]) | { readonly [key: string]: DeepTemplate<I> }
 
-export const iterateTemplate = (template: SqlViewTemplate, cb: (column: Column<boolean, unknown>) => unknown): unknown => {
+export const iterateTemplate = <I extends Column, O>(template: DeepTemplate<I>, cb: (field: I) => O): DeepTemplate<O> => {
 	if (template instanceof Column) {
 		return cb(template)
 	} else if (template instanceof Array) {
@@ -17,10 +18,10 @@ export const iterateTemplate = (template: SqlViewTemplate, cb: (column: Column<b
 type _ParamType = string | number | boolean | null | Date
 export type ParamType = _ParamType | Array<_ParamType>
 
-export const typeSym = Symbol()
+export const innerTypeSym = Symbol()
 
 export abstract class InnerClass {
-	abstract [typeSym]: string
+	abstract [innerTypeSym]: unknown
 }
 
 export type SyntaxAdapter = {
@@ -37,34 +38,31 @@ export type BuildSqlHelper = {
 }
 
 export class Holder extends InnerClass {
-	[typeSym] = 'holder' as const
+	[innerTypeSym] = 'holder' as const
+	[sym]: {
+		parse: (helper: BuildSqlHelper) => string
+	}
 	constructor(
-		private parse: (helper: BuildSqlHelper) => string
+		parse: (helper: BuildSqlHelper) => string
 	) {
 		super()
-	}
-	static parse(holder: Holder, helper: BuildSqlHelper) {
-		return holder.parse(helper)
+		this[sym] = { parse }
 	}
 }
 
 export type ActiveExpr = string | Holder
 
 export type BuilderCtx = {
-	emitUsed: () => void,
-	buildExpr: () => ActiveExpr[],
+	emitInnerUsed: () => void,
+	toExpr: () => ActiveExpr[],
 }
 
 export class Segment extends InnerClass {
-	[typeSym] = 'segment' as const
+	[innerTypeSym] = 'segment' as const
 	constructor(
-		private createBuilderCtx: () => BuilderCtx,
+		public readonly createBuilderCtx: () => BuilderCtx,
 	) {
 		super()
-	}
-
-	static createBuilderCtx(segment: Segment): BuilderCtx {
-		return segment.createBuilderCtx()
 	}
 }
 
@@ -77,39 +75,54 @@ export const sql = (strings: TemplateStringsArray, ...values: Array<
 >) => new Segment(() => {
 	const arr = connectWith(strings.map((str): BuilderCtx => {
 		return {
-			emitUsed: () => { },
-			buildExpr: () => [str],
+			emitInnerUsed: () => { },
+			toExpr: () => [str],
 		}
 	}), (index): BuilderCtx => {
 		const value = values[index]
 		if (!(value instanceof InnerClass)) {
 			return {
-				emitUsed: () => { },
-				buildExpr: () => [new Holder((helper) => helper.setParam(value))]
+				emitInnerUsed: () => { },
+				toExpr: () => [new Holder((helper) => helper.setParam(value))],
 			}
-		} else if (value[typeSym] === 'segment') {
-			return Segment.createBuilderCtx(value)
-		} else if (value[typeSym] === 'holder') {
+		} else if (value[innerTypeSym] === 'segment') {
+			return value.createBuilderCtx()
+		} else if (value[innerTypeSym] === 'holder') {
 			return {
-				emitUsed: () => { },
-				buildExpr: () => [value]
+				emitInnerUsed: () => { },
+				toExpr: () => [value],
 			}
-		} else if (value[typeSym] === 'column') {
+		} else if (value[innerTypeSym] === 'column') {
 			return Column.getOpts(value).builderCtx
-		} else if (value[typeSym] === 'sqlView') {
-			throw 'todo'
+		} else if (value[innerTypeSym] === 'sqlView') {
+			const builder = value._createStructBuilder()
+			return {
+				emitInnerUsed: () => {
+					iterateTemplate(builder.template, (c) => Column.getOpts(c).builderCtx.emitInnerUsed())
+					builder.emitInnerUsed()
+				},
+				toExpr: () => {
+					const struct = builder.buildStruct({ order: true })
+					return [
+						`select `,
+						getSelectAliasExpr(new Map()),
+						' ',
+						struct.getBodyExpr(),
+					].flat(1)
+				},
+			}
 		} else {
 			return value satisfies never
 		}
 	})
 	return {
-		emitUsed: () => arr.forEach((e) => e.emitUsed()),
-		buildExpr: () => arr.map((e) => e.buildExpr()).flat(),
+		emitInnerUsed: () => arr.forEach((e) => e.emitInnerUsed()),
+		toExpr: () => arr.map((e) => e.toExpr()).flat(1),
 	}
 })
 
 export class Column<N extends boolean = boolean, R = unknown> extends InnerClass {
-	[typeSym] = 'column' as const
+	[innerTypeSym] = 'column' as const
 	constructor(
 		private opts: {
 			builderCtx: BuilderCtx,
@@ -158,7 +171,7 @@ export type Relation<N extends boolean, VT extends SqlViewTemplate> = N extends 
 
 
 
-export class SelectSqlStruct {
+export class SelectBodyStruct {
 	constructor(
 		public opts: {
 			from: {
@@ -203,90 +216,89 @@ export class SelectSqlStruct {
 		return state
 	}
 
-	emitSnapshotAndBuildExpr(): ActiveExpr[] {
+	getBodyExpr(): ActiveExpr[] {
 		const buildResult: ActiveExpr[] = []
-		exec(() => {
-			buildResult.push(expr`${this.opts.from.expr}`[
-				...,
-				' ',
-				(helper) => helper.adapter.aliasAs(this.opts.from.alias(helper), 'table')
-			])
-		})
-		this.opts.join.forEach((join) => {
-			buildResult.push([
-				join.type satisfies 'left' | 'inner',
-				'join', join.lateral ? ' lateral' : '',
-				...join.expr,
-				(helper) => helper.adapter.aliasAs(join.alias(helper), 'column'),
-				' on ',
-				join.condation,
-			])
-		})
-		exec(() => {
-			const where = this.opts.where.map((e) => e.expr).filter((e) => e.length > 0)
-			if (where.length === 0) { return }
-			where.forEach((expr, i) => {
-				if (i === 0) {
-					buildResult.push([`where `, expr])
-				} else {
-					buildResult.push(['and ', expr])
-				}
-			})
-		})
-		exec(() => {
-			if (this.opts.groupBy.length === 0) { return }
-			this.opts.groupBy.forEach(({ expr }, i) => {
-				if (i === 0) {
-					buildResult.push([`group by `, expr])
-				} else {
-					buildResult.push(', ', expr)
-				}
-			})
-		})
-		exec(() => {
-			if (this.opts.having.length === 0) { return }
-			this.opts.having.forEach(({ expr }, i) => {
-				if (i === 0) {
-					buildResult.push(`having `, expr)
-				} else {
-					buildResult.push(' and ', expr)
-				}
-			})
-		})
-		exec(() => {
-			if (this.opts.order.length === 0) { return }
-			this.opts.order.forEach(({ expr, order }, i) => {
-				if (i === 0) {
-					buildResult.push(`order by `, expr, ` ${order} NULLS FIRST`)
-				} else {
-					buildResult.push(', ', expr, ` ${order} NULLS FIRST`)
-				}
-			})
-		})
-		if (this.opts.skip) {
-			const skip = this.opts.skip
-			buildResult.push(new Holder((helper) => helper.adapter.skip(skip).trim()))
-		}
-		if (this.opts.take !== null) {
-			const take = this.opts.take
-			buildResult.push(new Holder((helper) => helper.adapter.take(take).trim()))
-		}
+		// todo
+		// exec(() => {
+		// 	buildResult.push(expr`${this.opts.from.expr}`[
+		// 		...,
+		// 		' ',
+		// 		(helper) => helper.adapter.aliasAs(this.opts.from.alias(helper), 'table')
+		// 	])
+		// })
+		// this.opts.join.forEach((join) => {
+		// 	buildResult.push([
+		// 		join.type satisfies 'left' | 'inner',
+		// 		'join', join.lateral ? ' lateral' : '',
+		// 		...join.expr,
+		// 		(helper) => helper.adapter.aliasAs(join.alias(helper), 'column'),
+		// 		' on ',
+		// 		join.condation,
+		// 	])
+		// })
+		// exec(() => {
+		// 	const where = this.opts.where.map((e) => e.expr).filter((e) => e.length > 0)
+		// 	if (where.length === 0) { return }
+		// 	where.forEach((expr, i) => {
+		// 		if (i === 0) {
+		// 			buildResult.push([`where `, expr])
+		// 		} else {
+		// 			buildResult.push(['and ', expr])
+		// 		}
+		// 	})
+		// })
+		// exec(() => {
+		// 	if (this.opts.groupBy.length === 0) { return }
+		// 	this.opts.groupBy.forEach(({ expr }, i) => {
+		// 		if (i === 0) {
+		// 			buildResult.push([`group by `, expr])
+		// 		} else {
+		// 			buildResult.push(', ', expr)
+		// 		}
+		// 	})
+		// })
+		// exec(() => {
+		// 	if (this.opts.having.length === 0) { return }
+		// 	this.opts.having.forEach(({ expr }, i) => {
+		// 		if (i === 0) {
+		// 			buildResult.push(`having `, expr)
+		// 		} else {
+		// 			buildResult.push(' and ', expr)
+		// 		}
+		// 	})
+		// })
+		// exec(() => {
+		// 	if (this.opts.order.length === 0) { return }
+		// 	this.opts.order.forEach(({ expr, order }, i) => {
+		// 		if (i === 0) {
+		// 			buildResult.push(`order by `, expr, ` ${order} NULLS FIRST`)
+		// 		} else {
+		// 			buildResult.push(', ', expr, ` ${order} NULLS FIRST`)
+		// 		}
+		// 	})
+		// })
+		// if (this.opts.skip) {
+		// 	const skip = this.opts.skip
+		// 	buildResult.push(new Holder((helper) => helper.adapter.skip(skip).trim()))
+		// }
+		// if (this.opts.take !== null) {
+		// 	const take = this.opts.take
+		// 	buildResult.push(new Holder((helper) => helper.adapter.take(take).trim()))
+		// }
 		return buildResult
 	}
-
-	bracket(opts: {
-		selectTarget: Array<{ expr: ActiveExpr[], alias: Holder }>,
-	}) {
-		const bodyExpr = this.emitSnapshotAndBuildExpr()
-		return new SelectSqlStruct({
+	bracket(selectTarget: Array<{ expr: ActiveExpr[], alias: Holder }>) {
+		const bodyExpr = this.getBodyExpr()
+		// todo
+		return new SelectBodyStruct({
 			from: {
 				expr: [
-					`(`,
-					`select`,
-					buildSqlBodySelectExpr(opts.selectTarget),
-					!opts.selectTarget.length ? '' : 'from',
-					bodyExpr,
-					`)`
+					// `(`,
+					// `select`,
+					// buildSqlBodySelectExpr(opts.selectTarget),
+					// !opts.selectTarget.length ? '' : 'from',
+					// bodyExpr,
+					// `)`
 				],
 				alias: exec(() => {
 					const key = {}
@@ -302,6 +314,17 @@ export class SelectSqlStruct {
 			skip: 0,
 		})
 	}
+}
+
+export function getSelectAliasExpr(selectTarget: Map<Holder, ActiveExpr[]>): ActiveExpr[] {
+	if (selectTarget.size === 0) { return ['1'] }
+	return [...selectTarget.entries()].map(([holder, expr]) => {
+		return new Holder((helper) => {
+			const selectStr = parseExpr(expr, helper)
+			const aliasStr = parseExpr([holder], helper)
+			return helper.adapter.selectAndAlias(selectStr, aliasStr)
+		})
+	})
 }
 
 export type SqlState = 'leftJoin' | 'innerJoin' | 'where' | 'groupBy' | 'having' | 'take' | 'skip' | 'order'
@@ -357,7 +380,7 @@ export function createExprTools() {
 }
 
 export function parseExpr(expr: ActiveExpr[], helper: BuildSqlHelper): string {
-	const result = expr.map((e) => typeof e === 'string' ? e : Holder.parse(e, helper)).join('')
+	const result = expr.map((e) => typeof e === 'string' ? e : e[sym].parse(helper)).join('')
 	return result
 }
 

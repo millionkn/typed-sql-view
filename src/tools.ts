@@ -19,3 +19,17 @@ export function connectWith<T, V>(arr: readonly T[], getValue: (index: number) =
 	})
 	return result.flat()
 }
+
+export function withPromiseResolvers<T>() {
+	let resolve: (value: T) => void
+	let reject: (reason?: any) => void
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res
+		reject = rej
+	})
+	return {
+		promise,
+		resolve: resolve!,
+		reject: reject!,
+	}
+}

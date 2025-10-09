@@ -1,8 +1,6 @@
-import { SqlViewTemplate, SelectSqlStruct, Column, Segment, Holder, sql } from "./define.js"
+import { SqlViewTemplate, SelectBodyStruct, Column, Segment, Holder, sql } from "./define.js"
 import { SqlView } from "./sqlView.js"
 import { exec } from "./tools.js"
-
-
 
 export function createSqlView<const VT extends SqlViewTemplate>(
 	from: Segment,
@@ -17,31 +15,36 @@ export function createSqlView<const VT extends SqlViewTemplate>(
 			return new Column({
 				withNull: true,
 				format: async (raw) => raw,
-				builderCtx: Segment.createBuilderCtx(segment),
+				builderCtx: segment.createBuilderCtx(),
 			})
 		}, sql`${holder}`)
-		const fromCtx = Segment.createBuilderCtx(from)
+		const fromCtx = from.createBuilderCtx()
 		return {
 			template,
 			declareUsed: () => {
-				fromCtx.emitUsed()
+				fromCtx.emitInnerUsed()
 			},
-			build: (flag) => {
-				const sqlBody = new SelectSqlStruct({
-					from: {
-						expr: fromCtx.buildExpr(),
-						alias: holder,
+			snapshot: () => {
+				const fromSnapshot = fromCtx.snapshot()
+				return {
+					getStruct: (flag) => {
+						const sqlBody = new SelectBodyStruct({
+							from: {
+								expr: fromSnapshot.getExpr(),
+								alias: holder,
+							},
+							join: [],
+							where: [],
+							groupBy: [],
+							having: [],
+							order: [],
+							take: null,
+							skip: 0,
+						})
+						if (!flag.order) { sqlBody.opts.order = [] }
+						return sqlBody
 					},
-					join: [],
-					where: [],
-					groupBy: [],
-					having: [],
-					order: [],
-					take: null,
-					skip: 0,
-				})
-				if (!flag.order) { sqlBody.opts.order = [] }
-				return sqlBody
+				}
 			},
 		}
 	})
