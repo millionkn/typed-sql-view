@@ -23,7 +23,7 @@ export type SelectResult<VT extends SqlViewTemplate> = VT extends readonly [] ? 
 	? { -readonly [key in keyof VT]: SelectResult<VT[key]> }
 	: never
 
-export const proxyBuilder = <VT extends SqlViewTemplate>(structBuilder: SelectStructBuilder<VT>, cb: (column: Column) => Column) => {
+export const proxyBuilder = <VT extends SqlViewTemplate>(structBuilder: SelectStructBuilder<VT>, forceSetNull: boolean) => {
 	let instanceUsed = false
 	return {
 		instanceUsed: () => instanceUsed,
@@ -55,8 +55,8 @@ function createJoin<N extends boolean, VT1 extends SqlViewTemplate, VT extends S
 	}) => Segment,
 }) {
 
-	const base = proxyBuilder(opts.baseBuilder, (c) => c)
-	const extra = proxyBuilder(opts.extraBuilder, (c) => c.withNull(opts.withNull))
+	const base = proxyBuilder(opts.baseBuilder, false)
+	const extra = proxyBuilder(opts.extraBuilder, opts.withNull)
 	const template = {
 		base: base.template,
 		extra: extra.template as Relation<N, VT>,
@@ -135,8 +135,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 	createSelectAll(flag: BuildFlag) {
 		const structBuilder = this._createStructBuilder()
 		iterateTemplate(structBuilder.template, (c) => c instanceof Column, (c) => {
-			const columnOpts = Column.getOpts(c)
-			columnOpts.builderCtx.emitInnerUsed()
+			Column.getOpts(c).builderCtx.emitInnerUsed()
 		})
 		structBuilder.emitInnerUsed()
 		const { selectTarget, columnFormatMapper } = exec(() => {
@@ -199,7 +198,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 		template: VT1,
 	) => null | false | undefined | Segment): SqlView<VT1> {
 		return new SqlView(() => {
-			const instance = proxyBuilder<VT1>(this._createStructBuilder(), (c) => c)
+			const instance = proxyBuilder<VT1>(this._createStructBuilder(), false)
 			const condationBuilderCtx = exec(() => {
 				const condationSegment = getCondation(instance.template)
 				return !condationSegment ? null : condationSegment.createBuilderCtx()
@@ -253,20 +252,28 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 		getTemplate: (vt: VT1) => VT,
 	): SqlView<VT> {
 		return new SqlView(() => {
-			const instance = proxyBuilder<VT1>(this._createStructBuilder(), (c) => c)
+			const instance = proxyBuilder<VT1>(this._createStructBuilder(), false)
 			const keys = getKeyTemplate(instance.template)
 			const content = getTemplate(instance.template)
 			return {
 				template: content,
-				decalerUsedExpr: instance.decalerUsedExpr,
-				getSqlBody: (flag) => {
-					const sqlBody = instance.getSqlBody({
+				emitInnerUsed: () => {
+					iterateTemplate(keys, (c) => c instanceof Column, (c) => {
+						Column.getOpts(c).builderCtx.emitInnerUsed()
+					})
+					iterateTemplate(content, (c) => c instanceof Column, (c) => {
+						Column.getOpts(c).builderCtx.emitInnerUsed()
+					})
+				},
+				buildBody: (flag) => {
+					const sqlBody = instance.buildBody({
 						flag,
 						bracketIf: (sqlBody) => hasOneOf(sqlBody.state(), ['order', 'groupBy', 'having', 'skip', 'take'])
 					})
 					iterateTemplate(keys, (c) => c instanceof Column, (c) => {
-						instance.decalerUsedExpr(c[sym].expr)
-						sqlBody.opts.groupBy.push(c[sym].expr)
+						sqlBody.opts.groupBy.push({
+							expr: Column.getOpts(c).builderCtx.buildExpr(),
+						})
 					})
 					return sqlBody
 				}
@@ -338,32 +345,31 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 		}
 	}
 
-	mapTo<const VT extends SqlViewTemplate>(getTemplate: (e: VT1, opts: {
-		decalreUsed: (expr: string | Column<boolean, unknown>) => void,
-		param: SetParam,
-	}) => VT): SqlView<VT> {
-		return new SqlView((tools) => {
-			const base = this._createStructBuilder(tools)
+	mapTo<const VT extends SqlViewTemplate>(getTemplate: (
+		e: VT1,
+		createColumn: (getSegment: Segment) => Column
+	) => VT): SqlView<VT> {
+		return new SqlView(() => {
+			const base = this._createStructBuilder()
 			return {
-				template: getTemplate(base.template, {
-					decalreUsed: (expr) => {
-						base.decalerUsedExpr(expr.toString())
-					},
-					param: tools.setParam,
-				}),
-				decalerUsedExpr: base.decalerUsedExpr,
-				getSqlBody: base.getSqlStruct,
+				template: getTemplate(base.template, (segment) => new Column({
+					withNull: true,
+					format: async (raw) => raw,
+					builderCtx: segment.createBuilderCtx(),
+				})),
+				emitInnerUsed: base.emitInnerUsed,
+				buildBody: base.buildBody,
 			}
 		})
 	}
 
 	bracketIf(condation: (sqlBody: SelectBodyStruct) => boolean) {
-		return new SqlView<VT1>((tools) => {
-			const instance = proxyBuilder<VT1>(tools, this._createStructBuilder(tools), (c) => c)
+		return new SqlView<VT1>(() => {
+			const instance = proxyBuilder<VT1>(this._createStructBuilder(), false)
 			return {
 				template: instance.template,
-				decalerUsedExpr: instance.decalerUsedExpr,
-				getSqlBody: (flag) => instance.getSqlBody({
+				emitInnerUsed: instance.emitInnerUsed,
+				buildBody: (flag) => instance.buildBody({
 					flag,
 					bracketIf: (sqlBody) => condation(sqlBody),
 				}),
@@ -373,36 +379,39 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 
 	order(
 		order: 'asc' | 'desc',
-		getExpr: (template: VT1, param: SetParam) => false | null | undefined | string | Column<boolean, unknown>,
+		getExpr: (template: VT1) => false | null | undefined | Segment | Column<boolean, unknown>,
 	): SqlView<VT1> {
-		return new SqlView((tools) => {
-			const instance = proxyBuilder<VT1>(tools, this._createStructBuilder(tools), (c) => c)
+		return new SqlView(() => {
+			const instance = proxyBuilder<VT1>(this._createStructBuilder(), false)
+			const builderCtx = exec(() => {
+				const expr = getExpr(instance.template)
+				if (!expr) {
+					return null
+				} else if (expr instanceof Column) {
+					return Column.getOpts(expr).builderCtx
+				} else if (expr instanceof Segment) {
+					return expr.createBuilderCtx()
+				} else {
+					return null
+				}
+			})
 			return {
 				template: instance.template,
-				decalerUsedExpr: instance.decalerUsedExpr,
-				getSqlBody: (flag) => {
-					if (!flag.order) {
-						return instance.getSqlBody({
+				emitInnerUsed: instance.emitInnerUsed,
+				buildBody: (flag) => {
+					if (!flag.order || !builderCtx) {
+						return instance.buildBody({
 							flag,
 							bracketIf: () => false,
 						})
 					}
-					let expr = getExpr(instance.template, tools.setParam)?.toString()
-					if (expr) { expr = expr.trim() }
-					if (!expr) {
-						return instance.getSqlBody({
-							flag,
-							bracketIf: () => false,
-						})
-					}
-					instance.decalerUsedExpr(expr)
-					const sqlBody = instance.getSqlBody({
+					const sqlBody = instance.buildBody({
 						flag,
 						bracketIf: (sqlBody) => hasOneOf(sqlBody.state(), ['skip', 'take']),
 					})
 					sqlBody.opts.order.unshift({
 						order,
-						expr,
+						expr: builderCtx.buildExpr(),
 					})
 					return sqlBody
 				},
@@ -412,13 +421,13 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 
 	take(count: number | null | undefined | false): SqlView<VT1> {
 		if (typeof count !== 'number') { return this }
-		return new SqlView((tools) => {
-			const instance = this._createStructBuilder(tools)
+		return new SqlView(() => {
+			const instance = this._createStructBuilder()
 			return {
 				template: instance.template,
-				decalerUsedExpr: instance.decalerUsedExpr,
-				getSqlBody: (flag) => {
-					const sqlBody = instance.getSqlStruct({
+				emitInnerUsed: instance.emitInnerUsed,
+				buildBody: (flag) => {
+					const sqlBody = instance.buildBody({
 						...flag,
 						order: true,
 					})
@@ -431,15 +440,15 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 
 	skip(count: number | null | undefined | false): SqlView<VT1> {
 		if (typeof count !== 'number' || count <= 0) { return this }
-		return new SqlView((tools) => {
+		return new SqlView(() => {
 			const instance = this
 				.bracketIf((sqlBody) => hasOneOf(sqlBody.state(), ['take']))
-				._createStructBuilder(tools)
+				._createStructBuilder()
 			return {
 				template: instance.template,
-				decalerUsedExpr: instance.decalerUsedExpr,
-				getSqlBody: (flag) => {
-					const sqlBody = instance.getSqlStruct({
+				emitInnerUsed: instance.emitInnerUsed,
+				buildBody: (flag) => {
+					const sqlBody = instance.buildBody({
 						...flag,
 						order: true,
 					})
