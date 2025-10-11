@@ -1,19 +1,9 @@
 import { SqlView } from "./sqlView.js"
-import { Async, connectWith, exec } from "./tools.js"
+import { Async, connectWith, DeepTemplate, exec, iterateTemplate } from "./tools.js"
 
 export const sym = Symbol()
 
-export type DeepTemplate<I> = I | (readonly [...DeepTemplate<I>[]]) | { readonly [key: string]: DeepTemplate<I> }
 
-export const iterateTemplate = <I extends Column, O>(template: DeepTemplate<I>, cb: (field: I) => O): DeepTemplate<O> => {
-	if (template instanceof Column) {
-		return cb(template)
-	} else if (template instanceof Array) {
-		return template.map((t) => iterateTemplate(t, cb))
-	} else {
-		return Object.fromEntries(Object.entries(template).map(([key, t]) => [key, iterateTemplate(t, cb)]))
-	}
-}
 
 type _ParamType = string | number | boolean | null | Date
 export type ParamType = _ParamType | Array<_ParamType>
@@ -54,7 +44,7 @@ export type ActiveExpr = string | Holder
 
 export type BuilderCtx = {
 	emitInnerUsed: () => void,
-	toExpr: () => ActiveExpr[],
+	buildExpr: () => ActiveExpr[],
 }
 
 export class Segment extends InnerClass {
@@ -76,21 +66,21 @@ export const sql = (strings: TemplateStringsArray, ...values: Array<
 	const arr = connectWith(strings.map((str): BuilderCtx => {
 		return {
 			emitInnerUsed: () => { },
-			toExpr: () => [str],
+			buildExpr: () => [str],
 		}
 	}), (index): BuilderCtx => {
 		const value = values[index]
 		if (!(value instanceof InnerClass)) {
 			return {
 				emitInnerUsed: () => { },
-				toExpr: () => [new Holder((helper) => helper.setParam(value))],
+				buildExpr: () => [new Holder((helper) => helper.setParam(value))],
 			}
 		} else if (value[innerTypeSym] === 'segment') {
 			return value.createBuilderCtx()
 		} else if (value[innerTypeSym] === 'holder') {
 			return {
 				emitInnerUsed: () => { },
-				toExpr: () => [value],
+				buildExpr: () => [value],
 			}
 		} else if (value[innerTypeSym] === 'column') {
 			return Column.getOpts(value).builderCtx
@@ -98,11 +88,11 @@ export const sql = (strings: TemplateStringsArray, ...values: Array<
 			const builder = value._createStructBuilder()
 			return {
 				emitInnerUsed: () => {
-					iterateTemplate(builder.template, (c) => Column.getOpts(c).builderCtx.emitInnerUsed())
+					iterateTemplate(builder.template, (c) => c instanceof Column, (c) => Column.getOpts(c).builderCtx.emitInnerUsed())
 					builder.emitInnerUsed()
 				},
-				toExpr: () => {
-					const struct = builder.buildStruct({ order: true })
+				buildExpr: () => {
+					const struct = builder.buildBody({ order: true })
 					return [
 						`select `,
 						getSelectAliasExpr(new Map()),
@@ -117,7 +107,7 @@ export const sql = (strings: TemplateStringsArray, ...values: Array<
 	})
 	return {
 		emitInnerUsed: () => arr.forEach((e) => e.emitInnerUsed()),
-		toExpr: () => arr.map((e) => e.toExpr()).flat(1),
+		buildExpr: () => arr.map((e) => e.buildExpr()).flat(1),
 	}
 })
 
@@ -152,7 +142,7 @@ export class Column<N extends boolean = boolean, R = unknown> extends InnerClass
 	}
 }
 
-export type SqlViewTemplate = DeepTemplate<Column<boolean, unknown>>
+export type SqlViewTemplate = DeepTemplate<Column>
 
 type _Relation<N extends boolean, VT extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }> = {
 	[key in keyof VT]
@@ -380,8 +370,7 @@ export function createExprTools() {
 }
 
 export function parseExpr(expr: ActiveExpr[], helper: BuildSqlHelper): string {
-	const result = expr.map((e) => typeof e === 'string' ? e : e[sym].parse(helper)).join('')
-	return result
+	return expr.map((e): string => typeof e === 'string' ? e : e[sym].parse(helper)).join('')
 }
 
 export function buildSqlBodySelectExpr(selectTarget: {

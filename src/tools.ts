@@ -33,3 +33,15 @@ export function withPromiseResolvers<T>() {
 		reject: reject!,
 	}
 }
+
+export type DeepTemplate<I> = I | (readonly [...DeepTemplate<I>[]]) | { readonly [key: string]: DeepTemplate<I> }
+
+export const iterateTemplate = <I, O>(template: DeepTemplate<I>, isField: (value: unknown) => value is I, cb: (field: I) => O): DeepTemplate<O> => {
+	if (isField(template)) {
+		return cb(template)
+	} else if (template instanceof Array) {
+		return template.map((t) => iterateTemplate(t, isField, cb))
+	} else {
+		return Object.fromEntries(Object.entries(template).map(([key, t]) => [key, iterateTemplate(t, isField, cb)]))
+	}
+}

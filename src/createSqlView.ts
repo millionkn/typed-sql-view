@@ -18,33 +18,28 @@ export function createSqlView<const VT extends SqlViewTemplate>(
 				builderCtx: segment.createBuilderCtx(),
 			})
 		}, sql`${holder}`)
-		const fromCtx = from.createBuilderCtx()
+		const builderCtx = from.createBuilderCtx()
 		return {
 			template,
-			declareUsed: () => {
-				fromCtx.emitInnerUsed()
+			emitInnerUsed: () => {
+				builderCtx.emitInnerUsed()
 			},
-			snapshot: () => {
-				const fromSnapshot = fromCtx.snapshot()
-				return {
-					getStruct: (flag) => {
-						const sqlBody = new SelectBodyStruct({
-							from: {
-								expr: fromSnapshot.getExpr(),
-								alias: holder,
-							},
-							join: [],
-							where: [],
-							groupBy: [],
-							having: [],
-							order: [],
-							take: null,
-							skip: 0,
-						})
-						if (!flag.order) { sqlBody.opts.order = [] }
-						return sqlBody
+			buildBody: (flag) => {
+				const sqlBody = new SelectBodyStruct({
+					from: {
+						expr: builderCtx.buildExpr(),
+						alias: holder,
 					},
-				}
+					join: [],
+					where: [],
+					groupBy: [],
+					having: [],
+					order: [],
+					take: null,
+					skip: 0,
+				})
+				if (!flag.order) { sqlBody.opts.order = [] }
+				return sqlBody
 			},
 		}
 	})

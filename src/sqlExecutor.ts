@@ -1,5 +1,6 @@
-import { SqlViewTemplate, Column } from "./define.js";
-import { BuildFlag, SelectResult, SqlView } from "./sqlView.js";
+import { SqlViewTemplate, Column, SyntaxAdapter } from "./define.js";
+import { SelectResult, SqlView } from "./sqlView.js";
+import { hasOneOf } from "./tools.js";
 
 export class SqlExecutor {
 	static createMySqlExecutor(opts: {
@@ -8,9 +9,8 @@ export class SqlExecutor {
 		return new SqlExecutor({
 			runner: (sql, params) => opts.runner(sql, params),
 			adapter: {
-				aliasAs: (alias) => `as \`${alias}\``,
+				selectAndAlias: (select, alias) => `${select} as "${alias}"`,
 				paramHolder: () => `?`,
-				delimitedIdentifiers: (identifier) => `\`${identifier}\``,
 				skip: (v) => `offset ${v}`,
 				take: (v) => `limit ${v}`,
 			},
@@ -22,9 +22,8 @@ export class SqlExecutor {
 		return new SqlExecutor({
 			runner: (sql, params) => opts.runner(sql, params),
 			adapter: {
-				aliasAs: (alias) => `as "${alias}"`,
+				selectAndAlias: (select, alias) => `${select} as "${alias}"`,
 				paramHolder: (index) => `$${index + 1}`,
-				delimitedIdentifiers: (identifier) => `"${identifier}"`,
 				skip: (v) => `offset ${v}`,
 				take: (v) => `limit ${v}`,
 			},
@@ -32,7 +31,9 @@ export class SqlExecutor {
 	}
 	constructor(
 		private opts: {
-			adapter: Adapter,
+			adapter: SyntaxAdapter & {
+				paramHolder: (index: number) => string,
+			},
 			runner: (sql: string, params: unknown[]) => Promise<{ [key: string]: unknown }[]>
 		}
 	) { }
