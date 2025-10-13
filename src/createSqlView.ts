@@ -1,30 +1,36 @@
-import { SqlViewTemplate, SelectBodyStruct, Column, Segment, Holder, sql } from "./define.js"
+import { SqlViewTemplate, SelectBodyStruct, Column, Segment, Holder } from "./define.js"
 import { SqlView } from "./sqlView.js"
 import { exec } from "./tools.js"
 
 export function createSqlView<const VT extends SqlViewTemplate>(
 	from: Segment,
-	getTemplate: (createColumn: (segment: Segment) => Column<boolean, unknown>, rootAlias: Segment) => VT
+	getTemplate: (createColumn: (getSegemnt: (rootAlias: Segment) => Segment) => Column<boolean, unknown>) => VT
 ) {
 	return new SqlView(() => {
 		const holder = new Holder(exec(() => {
-			const key = {}
-			return (helper) => helper.fetchColumnAlias(key)
+			const key = Symbol('rootAlias')
+			return (helper) => helper.fetchTableAlias(key)
 		}))
-		const template = getTemplate((segment) => {
+		const rootAlias = new Segment(() => {
+			return {
+				emitInnerUsed: () => { },
+				buildExpr: () => [holder],
+			}
+		})
+		const template = getTemplate((getSegment) => {
 			return new Column({
 				withNull: true,
 				format: async (raw) => raw,
-				builderCtx: segment.createBuilderCtx(),
+				builderCtx: getSegment(rootAlias).createBuilderCtx(),
 			})
-		}, sql`${holder}`)
+		})
 		const builderCtx = from.createBuilderCtx()
 		return {
 			template,
 			emitInnerUsed: () => {
 				builderCtx.emitInnerUsed()
 			},
-			buildBody: (flag) => {
+			finalize: (flag) => {
 				const sqlBody = new SelectBodyStruct({
 					from: {
 						expr: builderCtx.buildExpr(),

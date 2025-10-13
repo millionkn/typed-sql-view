@@ -1,4 +1,4 @@
-import { Column, Relation, SelectBodyStruct, SqlViewTemplate, BuildSqlHelper, ActiveExpr, InnerClass, innerTypeSym, Segment, Holder, createExprTools, getSelectAliasExpr } from "./define.js"
+import { Column, Relation, SelectBodyStruct, SqlViewTemplate, ActiveExpr, InnerClass, innerTypeSym, Segment, Holder, sym, SqlState } from "./define.js"
 import { exec, hasOneOf, iterateTemplate, pickConfig } from "./tools.js"
 
 export type BuildFlag = {
@@ -9,7 +9,7 @@ export type BuildFlag = {
 export type SelectStructBuilder<VT extends SqlViewTemplate> = {
 	template: VT,
 	emitInnerUsed: () => void,
-	buildBody: (flag: BuildFlag) => SelectBodyStruct,
+	finalize: (flag: BuildFlag) => SelectBodyStruct,
 }
 
 export type SelectResult<VT extends SqlViewTemplate> = VT extends readonly [] ? []
@@ -25,20 +25,66 @@ export type SelectResult<VT extends SqlViewTemplate> = VT extends readonly [] ? 
 
 export const proxyBuilder = <VT extends SqlViewTemplate>(structBuilder: SelectStructBuilder<VT>, forceSetNull: boolean) => {
 	let instanceUsed = false
+	const outerUsedMapper: Map<symbol, {
+		backupAlias: Holder,
+		buildInnerExpr: () => ActiveExpr[],
+		buildOuterExpr: () => ActiveExpr[],
+	}> = new Map()
 	return {
 		instanceUsed: () => instanceUsed,
 		template: iterateTemplate(structBuilder.template, (c) => c instanceof Column, (inner) => {
-			throw 'todo'
+			const opts = Column.getOpts(inner)
+			const key = Symbol('columnAlias')
+			const backupAlias = new Holder((helper) => helper.fetchColumnAlias(key))
+			return new Column({
+				builderCtx: {
+					emitInnerUsed: () => {
+						instanceUsed = true
+						opts.builderCtx.emitInnerUsed()
+						outerUsedMapper.set(key, {
+							backupAlias,
+							buildInnerExpr: () => opts.builderCtx.buildExpr(),
+							buildOuterExpr: () => opts.builderCtx.buildExpr(),
+						})
+					},
+					buildExpr: () => {
+						return outerUsedMapper.get(key)!.buildOuterExpr()
+					},
+				},
+				format: opts.format,
+				withNull: forceSetNull ? true : opts.withNull,
+			})
 		}) as VT,
 		emitInnerUsed: () => {
-			throw 'todo'
+			instanceUsed = true
+			structBuilder.emitInnerUsed()
 		},
-		buildBody: (opts: {
+		finalize: (opts: {
 			flag: BuildFlag,
-			bracketIf: (sqlBody: SelectBodyStruct) => boolean
-		}): SelectBodyStruct => {
-			throw 'todo'
-		}
+			bracketIf: (bodyOpts: { state: Set<SqlState> }) => boolean,
+		}) => {
+			const sqlBody = structBuilder.finalize(opts.flag)
+			if (!opts.bracketIf({ state: sqlBody.state() })) {
+				return sqlBody
+			}
+			const tableAlias = exec(() => {
+				const key = Symbol('tableAlias')
+				return new Holder((helper) => helper.fetchTableAlias(key))
+			})
+			const result = sqlBody.bracket(tableAlias, new Map([...outerUsedMapper.values()].map((e) => {
+				return [e.backupAlias, {
+					buildExpr: () => e.buildInnerExpr()
+				}]
+			})))
+			outerUsedMapper.forEach((e) => {
+				const holder = new Holder((helper) => helper.adapter.columnRef(
+					tableAlias[sym].effectOn(helper),
+					e.backupAlias[sym].effectOn(helper),
+				))
+				e.buildOuterExpr = () => [holder]
+			})
+			return result
+		},
 	}
 }
 
@@ -53,7 +99,7 @@ function createJoin<N extends boolean, VT1 extends SqlViewTemplate, VT extends S
 		base: VT1,
 		extra: Relation<N, VT>,
 	}) => Segment,
-}) {
+}): SelectStructBuilder<{ base: VT1, extra: Relation<N, VT> }> {
 
 	const base = proxyBuilder(opts.baseBuilder, false)
 	const extra = proxyBuilder(opts.extraBuilder, opts.withNull)
@@ -72,24 +118,24 @@ function createJoin<N extends boolean, VT1 extends SqlViewTemplate, VT extends S
 			}
 			base.emitInnerUsed()
 		},
-		buildBody: (flag: BuildFlag) => {
+		finalize: (flag: BuildFlag) => {
 			if (!extra.instanceUsed()) {
-				return base.buildBody({
+				return base.finalize({
 					flag,
-					bracketIf: () => false
+					bracketIf: () => false,
 				})
 			}
-			const baseBody = base.buildBody({
+			const baseBody = base.finalize({
 				flag,
-				bracketIf: (sqlBody) => hasOneOf(sqlBody.state(), ['groupBy', 'having', 'order', 'skip', 'take']),
+				bracketIf: (bodyOpts) => hasOneOf(bodyOpts.state, ['groupBy', 'having', 'order', 'skip', 'take']),
 			})
-			const extraBody = extra.buildBody({
+			const extraBody = extra.finalize({
 				flag: {
 					order: flag.order,
 				},
-				bracketIf: (sqlBody) => pickConfig(opts.mode, {
-					left: () => hasOneOf(sqlBody.state(), ['innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take']),
-					inner: () => hasOneOf(sqlBody.state(), ['leftJoin', 'groupBy', 'having', 'order', 'skip', 'take']),
+				bracketIf: (bodyOpts) => pickConfig(opts.mode, {
+					left: () => hasOneOf(bodyOpts.state, ['innerJoin', 'where', 'groupBy', 'having', 'order', 'skip', 'take']),
+					inner: () => hasOneOf(bodyOpts.state, ['leftJoin', 'groupBy', 'having', 'order', 'skip', 'take']),
 				})
 			})
 
@@ -123,7 +169,7 @@ function createJoin<N extends boolean, VT1 extends SqlViewTemplate, VT extends S
 export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 	[innerTypeSym] = 'sqlView' as const
 	constructor(
-		public readonly _createStructBuilder: () => SelectStructBuilder<VT1>,
+		private readonly _createStructBuilder: () => SelectStructBuilder<VT1>,
 	) {
 		super()
 	}
@@ -131,68 +177,15 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 	pipe<R>(op: (self: this) => R): R {
 		return op(this)
 	}
-
-	createSelectAll(flag: BuildFlag) {
-		const structBuilder = this._createStructBuilder()
-		iterateTemplate(structBuilder.template, (c) => c instanceof Column, (c) => {
-			Column.getOpts(c).builderCtx.emitInnerUsed()
-		})
-		structBuilder.emitInnerUsed()
-		const { selectTarget, columnFormatMapper } = exec(() => {
-			const exprTools = createExprTools()
-			const allSelectTarget: Map<object, {
-				expr: ActiveExpr[],
-				alias: Holder,
-			}> = new Map()
-			const columnFormatMapper: Map<Column, (helper: BuildSqlHelper, raw: { [key: string]: unknown }) => Promise<unknown>> = new Map()
-			iterateTemplate(structBuilder.template, (c) => c instanceof Column, (c) => {
-				const columnOpts = Column.getOpts(c)
-				const columnExpr = columnOpts.builderCtx.buildExpr()
-				const columnExprKey = exprTools.fetchExprKey(columnExpr)
-				if (!allSelectTarget.has(columnExprKey)) {
-					const aliasHolder = new Holder((helper) => helper.fetchColumnAlias(columnExprKey))
-					allSelectTarget.set(columnExprKey, {
-						expr: columnExpr,
-						alias: aliasHolder,
-					})
-				}
-				if (!columnFormatMapper.has(c)) {
-					columnFormatMapper.set(c, async (helper, raw) => {
-						const aliasStr = helper.fetchColumnAlias(columnExprKey)
-						if (columnOpts.withNull === true && raw[aliasStr] === null) { return null }
-						return columnOpts.format(raw[aliasStr])
-					})
-				}
-			})
-			return {
-				selectTarget: new Map([...allSelectTarget.values()].map(({ expr, alias }) => [alias, expr])),
-				columnFormatMapper,
-			}
-		})
-
-		const bodyExpr = structBuilder.buildBody(flag).getBodyExpr()
+	[sym]() {
 		return {
-			expr: [
-				'select ',
-				getSelectAliasExpr(selectTarget),
-				' from ',
-				bodyExpr,
-			].flat(1) satisfies ActiveExpr[],
-			rawFormatter: async (helper: BuildSqlHelper, raw: { [key: string]: unknown }) => {
-				const loadingArr: Promise<unknown>[] = new Array()
-				const resultMapper = new Map<Column, unknown>()
-				iterateTemplate(structBuilder.template, (c) => c instanceof Column, (c) => {
-					const formatMapper = columnFormatMapper.get(c)
-					if (!formatMapper) { throw new Error('formatter not found') }
-					loadingArr.push(formatMapper(helper, raw).then((value) => {
-						resultMapper.set(c, value)
-					}))
-				})
-				await Promise.all(loadingArr)
-				return iterateTemplate(structBuilder.template, (c) => c instanceof Column, (c) => resultMapper.get(c)) as SelectResult<VT1>
+			_createStructBuilder: this._createStructBuilder,
+			createSelectAll: (flag: BuildFlag) => {
+
 			}
 		}
 	}
+
 
 	andWhere(getCondation: (
 		template: VT1,
@@ -209,8 +202,8 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 					emitInnerUsed: () => {
 						instance.emitInnerUsed()
 					},
-					buildBody: (flag) => {
-						return instance.buildBody({
+					finalize: (flag) => {
+						return instance.finalize({
 							flag,
 							bracketIf: () => false,
 						})
@@ -225,17 +218,17 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 					}
 					instance.emitInnerUsed()
 				},
-				buildBody: (flag) => {
+				finalize: (flag) => {
 					const condationExpr = condationBuilderCtx.buildExpr()
 					if (condationExpr.length === 0) {
-						return instance.buildBody({
+						return instance.finalize({
 							flag,
 							bracketIf: () => false,
 						})
 					}
-					const sqlBody = instance.buildBody({
+					const sqlBody = instance.finalize({
 						flag,
-						bracketIf: (sqlBody) => hasOneOf(sqlBody.state(), ['take', 'skip'])
+						bracketIf: (bodyOpts) => hasOneOf(bodyOpts.state, ['take', 'skip'])
 					})
 					const target = sqlBody.opts.groupBy.length === 0 ? sqlBody.opts.where : sqlBody.opts.having
 					target.push({
@@ -247,28 +240,49 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 		})
 	}
 
-	groupBy<const VT extends SqlViewTemplate>(
-		getKeyTemplate: (vt: VT1) => SqlViewTemplate,
-		getTemplate: (vt: VT1) => VT,
-	): SqlView<VT> {
+	groupBy<const KT extends SqlViewTemplate, const VT extends SqlViewTemplate>(
+		getKeyTemplate: (vt: VT1) => KT,
+		getAggrateValues: (createColumn: (getSegment: (vt: VT1) => Segment) => Column<boolean, unknown>) => VT,
+	): SqlView<{ keys: KT, aggrateValues: VT }> {
 		return new SqlView(() => {
 			const instance = proxyBuilder<VT1>(this._createStructBuilder(), false)
 			const keys = getKeyTemplate(instance.template)
-			const content = getTemplate(instance.template)
+			let noKeys = true
+			iterateTemplate(keys, (c) => c instanceof Column, (c) => {
+				noKeys = false
+			})
+			const aggrateValues = getAggrateValues((getSegment) => new Column({
+				withNull: true,
+				format: async (raw) => raw,
+				builderCtx: getSegment(instance.template).createBuilderCtx(),
+			}))
 			return {
-				template: content,
+				template: {
+					keys,
+					aggrateValues,
+				},
 				emitInnerUsed: () => {
 					iterateTemplate(keys, (c) => c instanceof Column, (c) => {
 						Column.getOpts(c).builderCtx.emitInnerUsed()
 					})
-					iterateTemplate(content, (c) => c instanceof Column, (c) => {
+					iterateTemplate(aggrateValues, (c) => c instanceof Column, (c) => {
 						Column.getOpts(c).builderCtx.emitInnerUsed()
 					})
 				},
-				buildBody: (flag) => {
-					const sqlBody = instance.buildBody({
-						flag,
-						bracketIf: (sqlBody) => hasOneOf(sqlBody.state(), ['order', 'groupBy', 'having', 'skip', 'take'])
+				finalize: () => {
+					if (noKeys) {
+						return instance.finalize({
+							flag: {
+								order: false
+							},
+							bracketIf: (bodyOpts) => bodyOpts.state.size !== 0,
+						})
+					}
+					const sqlBody = instance.finalize({
+						flag: {
+							order: false,
+						},
+						bracketIf: (bodyOpts) => hasOneOf(bodyOpts.state, ['order', 'groupBy', 'having', 'skip', 'take'])
 					})
 					iterateTemplate(keys, (c) => c instanceof Column, (c) => {
 						sqlBody.opts.groupBy.push({
@@ -358,20 +372,24 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 					builderCtx: segment.createBuilderCtx(),
 				})),
 				emitInnerUsed: base.emitInnerUsed,
-				buildBody: base.buildBody,
+				finalize: base.finalize,
 			}
 		})
 	}
 
-	bracketIf(condation: (sqlBody: SelectBodyStruct) => boolean) {
+	bracketIf(condation: (opts: {
+		state: Set<SqlState>,
+	}) => boolean) {
 		return new SqlView<VT1>(() => {
 			const instance = proxyBuilder<VT1>(this._createStructBuilder(), false)
 			return {
 				template: instance.template,
 				emitInnerUsed: instance.emitInnerUsed,
-				buildBody: (flag) => instance.buildBody({
+				finalize: (flag) => instance.finalize({
 					flag,
-					bracketIf: (sqlBody) => condation(sqlBody),
+					bracketIf: (bodyOpts) => condation({
+						state: bodyOpts.state,
+					}),
 				}),
 			}
 		})
@@ -398,16 +416,16 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 			return {
 				template: instance.template,
 				emitInnerUsed: instance.emitInnerUsed,
-				buildBody: (flag) => {
+				finalize: (flag) => {
 					if (!flag.order || !builderCtx) {
-						return instance.buildBody({
+						return instance.finalize({
 							flag,
 							bracketIf: () => false,
 						})
 					}
-					const sqlBody = instance.buildBody({
+					const sqlBody = instance.finalize({
 						flag,
-						bracketIf: (sqlBody) => hasOneOf(sqlBody.state(), ['skip', 'take']),
+						bracketIf: (bodyOpts) => hasOneOf(bodyOpts.state, ['skip', 'take']),
 					})
 					sqlBody.opts.order.unshift({
 						order,
@@ -426,8 +444,8 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 			return {
 				template: instance.template,
 				emitInnerUsed: instance.emitInnerUsed,
-				buildBody: (flag) => {
-					const sqlBody = instance.buildBody({
+				finalize: (flag) => {
+					const sqlBody = instance.finalize({
 						...flag,
 						order: true,
 					})
@@ -442,13 +460,13 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends InnerClass {
 		if (typeof count !== 'number' || count <= 0) { return this }
 		return new SqlView(() => {
 			const instance = this
-				.bracketIf((sqlBody) => hasOneOf(sqlBody.state(), ['take']))
+				.bracketIf((opts) => hasOneOf(opts.state, ['take']))
 				._createStructBuilder()
 			return {
 				template: instance.template,
 				emitInnerUsed: instance.emitInnerUsed,
-				buildBody: (flag) => {
-					const sqlBody = instance.buildBody({
+				finalize: (flag) => {
+					const sqlBody = instance.finalize({
 						...flag,
 						order: true,
 					})

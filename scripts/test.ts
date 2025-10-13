@@ -1,150 +1,51 @@
-import { SqlExecutor, createSqlView, createSqlViewFromTable, } from '../src/index.js'
+import { SqlAdapter, createSqlView, sql } from '../src/index.js'
 import z from 'zod'
 
 
-const vvv = createSqlViewFromTable(sql`public.tableName1`, (column, rootAlias) => {
-	const companyId = column(sql`"${rootAlias}"."column_a"`).withNull(false)
+const personTableDefine = createSqlView(sql`"public"."personTable"`, (column) => {
 	return {
-		companyId: companyId.format((raw) => z.string().parse(raw)),
-		companyIdIsTarget: column(sql`${companyId} = ${'123456'}`).withNull(false)
+		companyId: column((rootAlias) => sql`"${rootAlias}"."companyId"`).withNull(false).format((raw) => z.string().parse(raw)),
+		//format支持异步
+		personName: column((rootAlias) => sql`"${rootAlias}"."personName"`).withNull(false).format(async (raw) => z.string().parse(raw)),
+
 	}
 })
 
-const companyTableDefine = createSqlViewFromTable((sql) => sql`"public"."tableName1"`, (sql, rootAlias) => {
+const companyTableDefine = createSqlView(sql`"public"."companyTable"`, (column) => {
 	return {
-		companyId: createColumn(sql`"${rootAlias}"."column_a"`)
+		companyId: column((rootAlias) => sql`"${rootAlias}"."companyId"`)
 			.withNull(false)
 			.format((raw) => z.string().parse(raw)),
-		companyType: createColumn(sql`"${rootAlias}"."column_b"`)
-			.withNull(false)
-			//format支持异步
-			.format(async (raw) => z.string().parse(raw)),
-		name: createColumn(sql`"${rootAlias}"."column_c"`)
+		companyName: column((rootAlias) => sql`"${rootAlias}"."name"`)
 			.withNull(false)
 			.format((raw) => z.string().parse(raw)),
 	}
-}).andWhere((sql, e) => sql`${e.companyType} like ${`%type%`}`)
-	.andWhere((e) => sql`exists (${vvv
-		.andWhere((e2) => sql`${e2.companyId} = ${e.companyId}`)
-		.skip(1)
+})
+
+const view = companyTableDefine
+	.andWhere((e) => sql`${e.companyName} like ${`%companyName%`}`)
+	.andWhere(() => sql`exists (${personTableDefine
+		.andWhere((e2) => sql`${e2.personName} = ${'targetPersonName'}`)
 		.mapTo(() => [])}
 	)`)
-	.lateralJoin('lazy left with null', (e) => {
-		return createSqlViewFromTable(sql`public.tableName2`, (sql, rootAlias) => {
-			return {
-				companyId: createColumn(sql`"${rootAlias}"."column_a"`).withNull(false)
-			}
-		}).andWhere((sql, e2) => sql`${e2.companyId} = ${e.base.companyId}`)
-	}, (sql, e) => sql`${e.base.companyId} = ${e.extra.companyId}`)
-	.mapTo((e, column) => {
-		return {
-			...e.base,
-			xx: column(sql`${e.base.companyId}`)
-		}
+	.lateralJoin('left join lazy withNull', (e) => {
+		return personTableDefine
+			.andWhere((e2) => sql`${e2.companyId} = ${e.companyId}`)
+			.groupBy((e2) => ({ companyId: e2.companyId }), (column) => {
+				return {
+					count: column(() => sql`count(*)`).withNull(false).format((raw) => z.number().parse(raw)),
+				}
+			})
+			.andWhere((e2) => sql`${e2.aggrateValues.count} > ${5}`)
 	})
-	.decalreUsed((e) => e)
-
-const personTableDefine = createSqlView(({ addFrom }) => {
-	const alias = addFrom(`"public"."tableName2"`)
-	const companyId = createColumn(`"${alias}"."column_a"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw))
-	const identify = createColumn(`"${alias}"."column_b"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw))
-	return {
-		companyId,
-		identify,
-		primaryKeys: [companyId, identify],
-
-		//可以延迟设置 'format' 与 'withNull'
-		scoreValue: createColumn(`"${alias}"."column_c"`),
-		name: createColumn(`"${alias}"."column_d"`).withNull(false).format((raw) => z.string().transform((v) => String(v)).parse(raw)),
-		jsonTag: createColumn(`"${alias}"."column_e"`).withNull(false),
-	}
-})
-
-const _view = personTableDefine
-	.join('left with null', personTableDefine, (e) => `${t.base.identify} = ${this.extra.identify}`)
-
-await SqlExecutor.createPostgresExecutor({
-	runner: async (sql, params) => {
-		console.log({ sql, params })
-		return []
-	}
-}).selectAll(_view)
-
-const view = _view
-	//根据业务要求,知道person最多有一个company,无论是否join 'company表'都不会影响'person表'的数量
-	//所以可以使用lazy,如果后面没有用到,就不进行join
-	//ps:left和inner都会立刻join,因为表的数量可能会被影响
-	//此处使用tag验证标签,一定程度上避免引用错误(可选)
-	.joinLazy((e, { leftJoin }) => {
-		return {
-			person: e,
-			company: leftJoin(true, companyTableDefine, (t) => `${e.companyId} = ${t.companyId}`),
-		}
-	})
+	.on((e) => sql`${e.base.companyId} = ${e.extra.keys.companyId}`)
 	.pipe((view) => {
-		return view
-			.groupBy((e) => [e.company.companyType], (e) => {
-				return {
-					companyType: e.company.companyType,
-					//由于后面没有使用minScore,所以实际不会被选择
-					minScore: createColumn(`min(${e.person.scoreValue})`),
-					maxScore: createColumn(`max(${e.person.scoreValue})`),
-				}
-			})
-			//这里由于groupBy了,所以会使用'having'而不是'where'
-			.andWhere((e, param) => `${e.minScore} > ${param(0)}`)
-			//根据过滤条件，确定结果不会为null
-			.mapTo((e) => {
-				return {
-					...e,
-					minScore: e.minScore.withNull(false),
-				}
-			})
+		const selectAll = SqlAdapter.createPostgresAdapter().selectAll(view)
+		console.log(
+			selectAll.sql,
+			selectAll.paramArr,
+		)
+
 	})
-	.pipe((view) => companyTableDefine.joinLazy((base, { leftJoin }) => {
-		return {
-			base,
-			// 由于声明了join的withNull为true
-			// 所以minScore的withNull变回true,
-			// maxScore的withNull会由boolean变为true,但查询结果的推断类型相同
-			extra: leftJoin(true, view, (t) => `${t.companyType} = ${base.companyType}`)
-		}
-	}))
 
 
-//适配mysql,也可自行实现 
-const executor = SqlExecutor.createMySqlExecutor({
-	runner: async (sql, params) => {
-		// 使用其他工具进行query
-		// console.log(sql, params)
-		return []
-	}
-})
-
-
-
-/**
-{
-	sql: 'select "table_0"."column_a" as "value_0","table_0"."column_b" as "value_1","table_0"."column_c" as "value_2" from "public"."tableName1" as "table_0"',
-	params: []
-}
-*/
-executor.selectAll(view.skip(1).take(5).mapTo((e) => {
-	return e.base
-})).then((arr) => {
-	const typeCheck = arr satisfies {
-		companyId: string;
-		companyType: string;
-		name: string;
-	}[]
-})
-
-SqlExecutor.createPostgresExecutor({
-	runner: async (sql, params) => {
-		// console.log({ sql, params })
-		return []
-	}
-}).selectAll(view.skip(1).take(5).mapTo((e) => ({
-	...e.base,
-	...e.extra,
-})))
