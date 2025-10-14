@@ -1,4 +1,4 @@
-import { SqlViewTemplate, SelectBodyStruct, Column, Segment, Holder } from "./define.js"
+import { SqlViewTemplate, SelectBodyStruct, Column, InnerSegment, Holder, Segment, sym } from "./define.js"
 import { SqlView } from "./sqlView.js"
 import { exec } from "./tools.js"
 
@@ -11,7 +11,8 @@ export function createSqlView<const VT extends SqlViewTemplate>(
 			const key = Symbol('rootAlias')
 			return (helper) => helper.fetchTableAlias(key)
 		}))
-		const rootAlias = new Segment(() => {
+		const builderCtx = from[sym].createBuilderCtx()
+		const rootAlias = new InnerSegment(() => {
 			return {
 				emitInnerUsed: () => { },
 				buildExpr: () => [holder],
@@ -21,10 +22,9 @@ export function createSqlView<const VT extends SqlViewTemplate>(
 			return new Column({
 				withNull: true,
 				format: async (raw) => raw,
-				builderCtx: getSegment(rootAlias).createBuilderCtx(),
+				builderCtx: getSegment(rootAlias)[sym].createBuilderCtx(),
 			})
 		})
-		const builderCtx = from.createBuilderCtx()
 		return {
 			template,
 			emitInnerUsed: () => {

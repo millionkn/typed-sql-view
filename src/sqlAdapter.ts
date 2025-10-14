@@ -1,4 +1,4 @@
-import { SqlViewTemplate, Column, SyntaxAdapter, parseAndEffectOnHelper, BuildSqlHelper, ParamType, sym, Segment, sql, Holder } from "./define.js";
+import { SqlViewTemplate, Column, SyntaxAdapter, parseAndEffectOnHelper, BuildSqlHelper, ParamType, sql, Segment, sym } from "./define.js";
 import { BuildFlag, SelectResult, SqlView } from "./sqlView.js";
 import { exec, hasOneOf, iterateTemplate } from "./tools.js";
 
@@ -10,8 +10,13 @@ export class SqlAdapter {
 				tableAlias: (alias) => `"${alias}"`,
 				columnRef: (tableAlias, columnAlias) => `"${tableAlias}"."${columnAlias}"`,
 				selectAndAlias: (select, alias) => `${select} as "${alias}"`,
-				skip: (v) => `offset ${v}`,
-				take: (v) => `limit ${v}`,
+				pagination: (skip, take) => {
+					let result: string[] = []
+					if (skip > 0) { result.push(`offset ${skip}`) }
+					if (take !== null) { result.push(`limit ${take}`) }
+					return result.join(' ')
+				},
+				order: (items) => `order by ${items.map(({ expr, order, nulls }) => `${expr} ${order} NULLS ${nulls}`).join(',')}`,
 			},
 		})
 	}
@@ -22,8 +27,13 @@ export class SqlAdapter {
 				tableAlias: (alias) => `as "${alias}"`,
 				columnRef: (tableAlias, columnAlias) => `"${tableAlias}"."${columnAlias}"`,
 				selectAndAlias: (select, alias) => `${select} as "${alias}"`,
-				skip: (v) => `offset ${v}`,
-				take: (v) => `limit ${v}`,
+				pagination: (skip, take) => {
+					let result: string[] = []
+					if (skip > 0) { result.push(`offset ${skip}`) }
+					if (take !== null) { result.push(`limit ${take}`) }
+					return result.join(' ')
+				},
+				order: (items) => `order by ${items.map(({ expr, order, nulls }) => `${expr} ${order} NULLS ${nulls}`).join(',')}`,
 			},
 		})
 	}
@@ -69,7 +79,7 @@ export class SqlAdapter {
 				}
 			}),
 		}
-		const builder = view[sym]()._createStructBuilder()
+		const builder = view[sym].createStructBuilder()
 		iterateTemplate(builder.template, (c) => c instanceof Column, (c) => {
 			Column.getOpts(c).builderCtx.emitInnerUsed()
 		})
@@ -101,7 +111,7 @@ export class SqlAdapter {
 				}).join(','),
 				' from ',
 				bodyExprStr,
-			] satisfies string[]).join(' '),
+			] satisfies string[]).join(''),
 			paramArr,
 			rawFormatter: async (raw: { [key: string]: unknown }) => {
 				const loadingArr: Promise<unknown>[] = new Array()

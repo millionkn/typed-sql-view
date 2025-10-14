@@ -11,13 +11,13 @@ view.pipe((v)=>v.join(v))
 const column = createColumn(`1`)
 createView(()=>column).join(createView(()=>column))
 ```
-导致createColumn需要在运行期提供
+导致createColumn需要在构建期提供
 
 # hint
 ```
 view.andWhere((sql,e)=>`exists(${view.andWhere((sql2,e2)=>``)})`)
 ```
-`sql`重复,故`sql`为全局函数,`sqlSegment`为构建期概念
+`sql`重复,故`sql`为全局函数,`sqlSegment`为声明期概念
 
 # hint
 
@@ -26,13 +26,13 @@ createSqlView(sql`xxx`,()=>{
 	return {
 		//....
 	}
-}).laterJoin(otherView,(t)=>createSqlView(sql`select * from yyy where ${t.columnA}=1`,()=>{
+}).lateralJoin(otherView,(t)=>createSqlView(sql`select * from yyy where ${t.columnA}=1`,()=>{
 	return {
 		//...
 	}
 }))
 ```
-`sqlSegment`本身是构建期概念,但内部能包含运行期才产生的column
+`sqlSegment`本身是声明期概念,但内部能包含构建期才产生的column(通过闭包)
 
 
 # hint
@@ -46,8 +46,11 @@ view
 此语法存在,根据
 - column是运行期构建,需要在declareUsed后才能开始获取实际ref
 - view内部存在column,需要传递declareUsed
+- 复用需求
 
-说明转sql返回值是某种数据结构而非函数以便传递declareUsed
+declareUsed分为两个阶段:
+- emitSelectColumnUsed
+- emitSegmentUsed
 
 ```ts
 const sqlSegment1 =sql`${}`//[ `string`,column, view, sqlSegment]
@@ -67,7 +70,28 @@ view内部可能有父column,不能在sql构造时立刻构造viewCtx并declareU
 
 
 # 工作流程
-- emitDeclareUsedColumn
+- emitExportUsed,
+- emitInnerUsed,
 - getSqlStruct
-- 提供ctx,确定最终分配的alias
-- columnExpr对比,构建select部分
+- getExpr
+- getExprStr
+
+由于lazy join,`emitExportUsed`可能会影响`emitInnerUsed`,故`emitExportUsed`先于`emitInnerUsed`
+
+例:
+```ts
+xxx.lateralJoin((e)=>{
+	return createSqlView(sql`${e.lazyColumn}`)
+})
+```
+对于`base`来说,此时e上的任何`column`都是`export`,而后续pipe不论如何使用(`select`,`where`等),都是由此处的`export`衍生来的
+
+由于`lazyColumn`存在,导致lateralJoin内部,extra必须先于base全部声明,又由于`export`先于`inner`,故声明顺序为
+- `extra-export`
+- `extra-inner`
+- `base-export`
+- `base-inner`
+
+在这个顺序中,`base-export`的声明其实被分散到了`extra-inner`和`base-export`,而更早的 `extra-export`对于`base`没有影响,因此在`base`看来,声明顺序仍然是`base-export`->`base-inner`,只不过`base-outer`中进行了重复的声明
+
+ps:`base-export`不会影响`extra-pure-inner`,而`base-export-in-extra`和`base-export`不分先后,故`extra-inner`和`base-export`可以调换顺序

@@ -26,8 +26,8 @@ const view = companyTableDefine
 	.andWhere((e) => sql`${e.companyName} like ${`%companyName%`}`)
 	.andWhere(() => sql`exists (${personTableDefine
 		.andWhere((e2) => sql`${e2.personName} = ${'targetPersonName'}`)
-		.mapTo(() => [])}
-	)`)
+		// .mapTo(() => [])
+		})`)
 	.lateralJoin('left join lazy withNull', (e) => {
 		return personTableDefine
 			.andWhere((e2) => sql`${e2.companyId} = ${e.companyId}`)
@@ -39,13 +39,29 @@ const view = companyTableDefine
 			.andWhere((e2) => sql`${e2.aggrateValues.count} > ${5}`)
 	})
 	.on((e) => sql`${e.base.companyId} = ${e.extra.keys.companyId}`)
-	.pipe((view) => {
-		const selectAll = SqlAdapter.createPostgresAdapter().selectAll(view)
-		console.log(
-			selectAll.sql,
-			selectAll.paramArr,
-		)
+// .mapTo((e) => e.base)
 
-	})
 
+const selectAll = new SqlAdapter({
+	paramHolder: (index) => {
+		return `$${index + 1}`
+	},
+	adapter: {
+		tableAlias: (alias) => `as "${alias}"`,
+		columnRef: (tableAlias, columnAlias) => `"${tableAlias}"."${columnAlias}"`,
+		selectAndAlias: (select, alias) => `${select} as "${alias}"`,
+		pagination: (skip, take) => {
+			let result: string[] = []
+			if (skip > 0) { result.push(`offset ${skip}`) }
+			if (take !== null) { result.push(`limit ${take}`) }
+			return result.join(' ')
+		},
+		order: (items) => `order by ${items.map(({ expr, order, nulls }) => `${expr} ${order} NULLS ${nulls}`).join(',')}`,
+	},
+}).selectAll(view)
+console.log('=========sql==========')
+console.log(selectAll.sql)
+console.log('=========paramArr==========')
+console.log(selectAll.paramArr)
+console.log('=========end==========')
 
