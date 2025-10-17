@@ -385,7 +385,6 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 			createColumn: (getSegment: Segment) => ColumnRef,
 			assertWithNull: <N extends boolean, VT2 extends SqlViewTemplate>(withNull: N, template: VT2) => AssertWithNull<N, VT2>
 		}
-
 	) => VT): SqlView<VT> {
 		return new SqlView(() => {
 			const base = this.createStructBuilder()
@@ -394,7 +393,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 					assertWithNull: <N extends boolean, VT2 extends SqlViewTemplate>(withNull: N, template: VT2) => iterateTemplate(template, (c) => c instanceof ColumnRef, (c) => {
 						return c.withNull(withNull)
 					}) as AssertWithNull<N, VT2>,
-					createColumn: (segment) => new ColumnRef({
+					createColumn: (segment: Segment) => new ColumnRef({
 						withNull: true,
 						format: async (raw) => raw,
 						builderCtx: segment[sym].createBuilderCtx(),

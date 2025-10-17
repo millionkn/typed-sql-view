@@ -21,6 +21,8 @@
 		"zod": "^4.1.12"
 	},
 	"files": [
+		"CLAUDE.md",
+		"examples",
 		"./dist"
 	],
 	"exports": {
