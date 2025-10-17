@@ -93,8 +93,19 @@ export const sql = (strings: TemplateStringsArray, ...values: Array<
 		}
 	})
 }
+export const rawSql = (sql: string): Segment => {
+	if (sql.length === 0) {
+		throw new Error('sql length is 0')
+	}
+	return new InnerSegment(() => {
+		return {
+			emitInnerUsed: () => { },
+			buildExpr: () => [sql],
+		}
+	})
+}
 
-export class Column<N extends boolean = boolean, R = unknown> extends Segment {
+export class ColumnRef<N extends boolean = boolean, R = unknown> extends Segment {
 	[sym] = {
 		type: 'column' as const,
 		createBuilderCtx: (): BuilderCtx => {
@@ -110,19 +121,19 @@ export class Column<N extends boolean = boolean, R = unknown> extends Segment {
 	) {
 		super()
 	}
-	static getOpts(column: Column<boolean, unknown>) {
+	static getOpts(column: ColumnRef<boolean, unknown>) {
 		return column.opts
 	}
 	withNull<const N extends boolean>(value: N) {
-		return new Column<N, R>({
+		return new ColumnRef<N, R>({
 			builderCtx: this.opts.builderCtx,
 			format: this.opts.format,
 			withNull: value,
 		})
 	}
 
-	format = <R2>(value: (value: R) => Async<R2>): Column<N, R2> => {
-		return new Column<N, R2>({
+	format = <R2>(value: (value: R) => Async<R2>): ColumnRef<N, R2> => {
+		return new ColumnRef<N, R2>({
 			builderCtx: this.opts.builderCtx,
 			format: async (raw) => value(await this.opts.format(raw)),
 			withNull: this.opts.withNull,
@@ -130,19 +141,32 @@ export class Column<N extends boolean = boolean, R = unknown> extends Segment {
 	}
 }
 
-export type SqlViewTemplate = DeepTemplate<Column>
+export type SqlViewTemplate = DeepTemplate<ColumnRef>
 
 type _Relation<N extends boolean, VT extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }> = {
 	[key in keyof VT]
 	: VT[key] extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate } ? _Relation<N, VT[key]>
-	: VT[key] extends Column<infer N2, infer R> ? Column<N2 & N, R>
+	: VT[key] extends ColumnRef<infer N2, infer R> ? ColumnRef<(N | N2) extends false ? false : (N | N2), R>
 	: never
 }
 
 export type Relation<N extends boolean, VT extends SqlViewTemplate> = N extends false ? VT
-	: VT extends Column<infer N2, infer R> ? Column<N2 & N, R>
+	: VT extends ColumnRef<infer N2, infer R> ? ColumnRef<N | N2, R>
 	: VT extends readonly SqlViewTemplate[] ? _Relation<N, VT>
 	: VT extends { readonly [key: string]: SqlViewTemplate } ? _Relation<N, VT>
+	: never
+
+type _AssertWithNull<N extends boolean, VT extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }> = {
+	[key in keyof VT]
+	: VT[key] extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate } ? _AssertWithNull<N, VT[key]>
+	: VT[key] extends ColumnRef<infer N2, infer R> ? ColumnRef<N, R>
+	: never
+}
+
+export type AssertWithNull<N extends boolean, VT extends SqlViewTemplate> =
+	VT extends ColumnRef<infer N2, infer R> ? ColumnRef<N, R>
+	: VT extends readonly SqlViewTemplate[] ? _AssertWithNull<N, VT>
+	: VT extends { readonly [key: string]: SqlViewTemplate } ? _AssertWithNull<N, VT>
 	: never
 
 export class SelectBodyStruct {
@@ -307,3 +331,9 @@ export type SqlState = 'leftJoin' | 'innerJoin' | 'where' | 'groupBy' | 'having'
 export function parseAndEffectOnHelper(expr: ActiveExpr[], helper: BuildSqlHelper): string {
 	return expr.map((e): string => typeof e === 'string' ? e : e.effectOn(helper)).join('')
 }
+
+export type SqlExecuteBundle<R> = {
+	sql: string;
+	paramArr: unknown[];
+	formatter: (arr: { [key: string]: unknown }[]) => Promise<R>;
+};

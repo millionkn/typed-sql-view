@@ -1,4 +1,4 @@
-import { SqlViewTemplate, Column, SyntaxAdapter, parseAndEffectOnHelper, BuildSqlHelper, ParamType, sql, Segment, sym } from "./define.js";
+import { SqlViewTemplate, ColumnRef, SyntaxAdapter, parseAndEffectOnHelper, BuildSqlHelper, ParamType, sql, Segment, sym, SqlExecuteBundle } from "./define.js";
 import { BuildFlag, SelectResult, SqlView } from "./sqlView.js";
 import { exec, hasOneOf, iterateTemplate } from "./tools.js";
 
@@ -73,23 +73,26 @@ export class SqlAdapter {
 			}),
 			setParam: exec(() => {
 				return (param: ParamType) => {
-					const result = this.opts.paramHolder(paramArr.length)
-					paramArr.push(param)
-					return result
+					if (!(param instanceof Array)) { param = [param] }
+					return param.map((param) => {
+						const result = this.opts.paramHolder(paramArr.length)
+						paramArr.push(param)
+						return result
+					}).join(',')
 				}
 			}),
 		}
 		const builder = view[sym].createStructBuilder()
-		iterateTemplate(builder.template, (c) => c instanceof Column, (c) => {
-			Column.getOpts(c).builderCtx.emitInnerUsed()
+		iterateTemplate(builder.template, (c) => c instanceof ColumnRef, (c) => {
+			ColumnRef.getOpts(c).builderCtx.emitInnerUsed()
 		})
 		builder.emitInnerUsed()
 		const sqlBody = builder.finalize(flag)
 		const bodyExprStr = parseAndEffectOnHelper(sqlBody.buildBodyExpr(), helper)
 		const selectMapper: Map<string, { aliasStr: string }> = new Map()
-		const formatMapper: Map<Column, (raw: { [key: string]: unknown }) => Promise<unknown>> = new Map()
-		iterateTemplate(builder.template, (c) => c instanceof Column, (c) => {
-			const columnOpts = Column.getOpts(c)
+		const formatMapper: Map<ColumnRef, (raw: { [key: string]: unknown }) => Promise<unknown>> = new Map()
+		iterateTemplate(builder.template, (c) => c instanceof ColumnRef, (c) => {
+			const columnOpts = ColumnRef.getOpts(c)
 			const selectStr = parseAndEffectOnHelper(columnOpts.builderCtx.buildExpr(), helper)
 			const aliasStr = helper.fetchColumnAlias(selectStr)
 			formatMapper.set(c, async (raw) => {
@@ -115,7 +118,7 @@ export class SqlAdapter {
 			paramArr,
 			rawFormatter: async (raw: { [key: string]: unknown }) => {
 				const loadingArr: Promise<unknown>[] = new Array()
-				const resultMapper = new Map<Column, unknown>()
+				const resultMapper = new Map<ColumnRef, unknown>()
 				formatMapper.forEach((formatter, c) => {
 					const promise = formatter(raw)
 					loadingArr.push(promise.then((v) => {
@@ -123,7 +126,7 @@ export class SqlAdapter {
 					}))
 				})
 				await Promise.all(loadingArr)
-				return iterateTemplate(builder.template, (c) => c instanceof Column, (c) => resultMapper.get(c)!) as SelectResult<VT>
+				return iterateTemplate(builder.template, (c) => c instanceof ColumnRef, (c) => resultMapper.get(c)!) as SelectResult<VT>
 			}
 		}
 	}
@@ -131,11 +134,11 @@ export class SqlAdapter {
 
 	aggrateView<VT1 extends SqlViewTemplate, VT2 extends SqlViewTemplate>(
 		view: SqlView<VT1>,
-		getTemplate: (createColumn: (getSegment: (vt: VT1) => Segment) => Column) => VT2,
-	) {
+		getTemplate: (createColumn: (getSegment: (vt: VT1) => Segment) => ColumnRef) => VT2,
+	): SqlExecuteBundle<SelectResult<VT2>> {
 		const rawSelect = view
 			.bracketIf((opts) => hasOneOf(opts.state, ['groupBy', 'skip', 'take']))
-			.mapTo((e, createColumn) => getTemplate((getSegment) => createColumn(getSegment(e))))
+			.mapTo((e, { createColumn }) => getTemplate((getSegment) => createColumn(getSegment(e))))
 			.pipe((view) => this.createRawSelectAll(view, { order: false }))
 
 		return {
@@ -150,7 +153,7 @@ export class SqlAdapter {
 
 	selectAll<VT extends SqlViewTemplate>(
 		view: SqlView<VT>,
-	) {
+	): SqlExecuteBundle<SelectResult<VT>[]> {
 		const rawSelect = this.createRawSelectAll(view, { order: true })
 		return {
 			sql: rawSelect.sql,
@@ -161,16 +164,16 @@ export class SqlAdapter {
 
 	selectOne<VT extends SqlViewTemplate>(
 		view: SqlView<VT>
-	) {
+	): SqlExecuteBundle<null | SelectResult<VT>> {
 		const rawSelect = this.createRawSelectAll(view.take(1), { order: true })
 		return {
 			sql: rawSelect.sql,
 			paramArr: rawSelect.paramArr,
-			formatter: (arr: { [key: string]: unknown }[]) => rawSelect.rawFormatter(arr[0]),
+			formatter: async (arr: { [key: string]: unknown }[]) => arr.length === 0 ? null : rawSelect.rawFormatter(arr[0]),
 		}
 	}
 
-	selectTotal<VT extends SqlViewTemplate>(view: SqlView<VT>) {
+	selectTotal<VT extends SqlViewTemplate>(view: SqlView<VT>): SqlExecuteBundle<number> {
 		return this.aggrateView(view, (createColumn) => createColumn(() => sql`count(*)`).format((raw) => Number(raw)).withNull(false))
 	}
 }

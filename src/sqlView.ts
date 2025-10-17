@@ -1,4 +1,4 @@
-import { Column, Relation, SelectBodyStruct, SqlViewTemplate, ActiveExpr, Segment, Holder, SqlState, sym, parseFullSelectExpr } from "./define.js"
+import { ColumnRef, Relation, SelectBodyStruct, SqlViewTemplate, ActiveExpr, Segment, Holder, SqlState, sym, parseFullSelectExpr, AssertWithNull } from "./define.js"
 import { exec, hasOneOf, iterateTemplate, pickConfig } from "./tools.js"
 
 export type BuildFlag = {
@@ -17,7 +17,7 @@ export type SelectResult<VT extends SqlViewTemplate> = VT extends readonly [] ? 
 	? [SelectResult<X>, ...SelectResult<Arr>]
 	: VT extends readonly (infer X extends SqlViewTemplate)[]
 	? SelectResult<X>[]
-	: VT extends Column<infer N, infer R>
+	: VT extends ColumnRef<infer N, infer R>
 	? (true extends N ? null : never) | R
 	: VT extends { [key: string]: SqlViewTemplate }
 	? { -readonly [key in keyof VT]: SelectResult<VT[key]> }
@@ -32,11 +32,11 @@ export const proxyBuilder = <VT extends SqlViewTemplate>(structBuilder: SelectSt
 	}> = new Map()
 	return {
 		instanceUsed: () => instanceUsed,
-		template: iterateTemplate(structBuilder.template, (c) => c instanceof Column, (inner) => {
-			const opts = Column.getOpts(inner)
+		template: iterateTemplate(structBuilder.template, (c) => c instanceof ColumnRef, (inner) => {
+			const opts = ColumnRef.getOpts(inner)
 			const key = Symbol('columnAlias')
 			const backupAlias = new Holder((helper) => helper.fetchColumnAlias(key))
-			return new Column({
+			return new ColumnRef({
 				builderCtx: {
 					emitInnerUsed: () => {
 						instanceUsed = true
@@ -176,8 +176,8 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 			const builder = this.createStructBuilder()
 			return {
 				emitInnerUsed: () => {
-					iterateTemplate(builder.template, (c) => c instanceof Column, (c) => {
-						const builderCtx = Column.getOpts(c).builderCtx
+					iterateTemplate(builder.template, (c) => c instanceof ColumnRef, (c) => {
+						const builderCtx = ColumnRef.getOpts(c).builderCtx
 						builderCtx.emitInnerUsed()
 						const key = Symbol('columnAlias')
 						selectMapper.set(new Holder((helper) => helper.fetchColumnAlias(key)), {
@@ -262,16 +262,16 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 
 	groupBy<const KT extends SqlViewTemplate, const VT extends SqlViewTemplate>(
 		getKeyTemplate: (vt: VT1) => KT,
-		getAggrateValues: (createColumn: (getSegment: (vt: VT1) => Segment) => Column<boolean, unknown>) => VT,
+		getAggrateValues: (createColumn: (getSegment: (vt: VT1) => Segment) => ColumnRef<boolean, unknown>) => VT,
 	): SqlView<{ keys: KT, aggrateValues: VT }> {
 		return new SqlView(() => {
 			const instance = proxyBuilder<VT1>(this.createStructBuilder(), false)
 			const keys = getKeyTemplate(instance.template)
 			let noKeys = true
-			iterateTemplate(keys, (c) => c instanceof Column, (c) => {
+			iterateTemplate(keys, (c) => c instanceof ColumnRef, (c) => {
 				noKeys = false
 			})
-			const aggrateValues = getAggrateValues((getSegment) => new Column({
+			const aggrateValues = getAggrateValues((getSegment) => new ColumnRef({
 				withNull: true,
 				format: async (raw) => raw,
 				builderCtx: getSegment(instance.template)[sym].createBuilderCtx(),
@@ -282,11 +282,11 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 					aggrateValues,
 				},
 				emitInnerUsed: () => {
-					iterateTemplate(keys, (c) => c instanceof Column, (c) => {
-						Column.getOpts(c).builderCtx.emitInnerUsed()
+					iterateTemplate(keys, (c) => c instanceof ColumnRef, (c) => {
+						ColumnRef.getOpts(c).builderCtx.emitInnerUsed()
 					})
-					iterateTemplate(aggrateValues, (c) => c instanceof Column, (c) => {
-						Column.getOpts(c).builderCtx.emitInnerUsed()
+					iterateTemplate(aggrateValues, (c) => c instanceof ColumnRef, (c) => {
+						ColumnRef.getOpts(c).builderCtx.emitInnerUsed()
 					})
 				},
 				finalize: () => {
@@ -304,9 +304,9 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 						},
 						bracketIf: (bodyOpts) => hasOneOf(bodyOpts.state, ['order', 'groupBy', 'having', 'skip', 'take'])
 					})
-					iterateTemplate(keys, (c) => c instanceof Column, (c) => {
+					iterateTemplate(keys, (c) => c instanceof ColumnRef, (c) => {
 						sqlBody.opts.groupBy.push({
-							expr: Column.getOpts(c).builderCtx.buildExpr(),
+							expr: ColumnRef.getOpts(c).builderCtx.buildExpr(),
 						})
 					})
 					return sqlBody
@@ -381,16 +381,25 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 
 	mapTo<const VT extends SqlViewTemplate>(getTemplate: (
 		e: VT1,
-		createColumn: (getSegment: Segment) => Column
+		opts: {
+			createColumn: (getSegment: Segment) => ColumnRef,
+			assertWithNull: <N extends boolean, VT2 extends SqlViewTemplate>(withNull: N, template: VT2) => AssertWithNull<N, VT2>
+		}
+
 	) => VT): SqlView<VT> {
 		return new SqlView(() => {
 			const base = this.createStructBuilder()
 			return {
-				template: getTemplate(base.template, (segment) => new Column({
-					withNull: true,
-					format: async (raw) => raw,
-					builderCtx: segment[sym].createBuilderCtx(),
-				})),
+				template: getTemplate(base.template, {
+					assertWithNull: <N extends boolean, VT2 extends SqlViewTemplate>(withNull: N, template: VT2) => iterateTemplate(template, (c) => c instanceof ColumnRef, (c) => {
+						return c.withNull(withNull)
+					}) as AssertWithNull<N, VT2>,
+					createColumn: (segment) => new ColumnRef({
+						withNull: true,
+						format: async (raw) => raw,
+						builderCtx: segment[sym].createBuilderCtx(),
+					})
+				}),
 				emitInnerUsed: base.emitInnerUsed,
 				finalize: base.finalize,
 			}
