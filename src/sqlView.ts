@@ -209,7 +209,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 
 	andWhere(getCondation: (
 		template: VT1,
-	) => null | false | undefined | Segment): SqlView<VT1> {
+	) => null | false | undefined | '' | Segment): SqlView<VT1> {
 		return new SqlView(() => {
 			const instance = proxyBuilder<VT1>(this.createStructBuilder(), false)
 			const condationBuilderCtx = exec(() => {
