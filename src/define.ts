@@ -280,7 +280,11 @@ export class SelectBodyStruct {
 				}
 			}))))
 		})
-		buildResult.push(new Holder((helper) => helper.adapter.pagination(this.opts.skip, this.opts.take)))
+		buildResult.push(new Holder((helper) => {
+			const str = helper.adapter.pagination(this.opts.skip, this.opts.take).trim()
+			if (str.length === 0) { return '' }
+			return ` ` + str
+		}))
 		return buildResult.flat(1)
 	}
 	bracket(tableAlias: Holder, selectTarget: Map<Holder, { buildExpr: () => ActiveExpr[] }>) {

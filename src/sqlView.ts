@@ -233,9 +233,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 			return {
 				template: instance.template,
 				emitInnerUsed: () => {
-					if (condationBuilderCtx) {
-						condationBuilderCtx.emitInnerUsed()
-					}
+					condationBuilderCtx.emitInnerUsed()
 					instance.emitInnerUsed()
 				},
 				finalize: (flag) => {
@@ -288,6 +286,7 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 					iterateTemplate(aggrateValues, (c) => c instanceof ColumnRef, (c) => {
 						ColumnRef.getOpts(c).builderCtx.emitInnerUsed()
 					})
+					instance.emitInnerUsed()
 				},
 				finalize: () => {
 					if (noKeys) {
