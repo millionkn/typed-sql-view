@@ -2,55 +2,25 @@ import { SqlViewTemplate, ColumnRef, SyntaxAdapter, parseAndEffectOnHelper, Buil
 import { BuildFlag, SelectResult, SqlView } from "./sqlView.js";
 import { exec, hasOneOf, iterateTemplate } from "./tools.js";
 
-export class SqlAdapter {
-	static createMySqlAdapter() {
-		return new SqlAdapter({
-			paramHolder: () => `?`,
-			adapter: {
-				tableAlias: (alias) => `"${alias}"`,
-				columnRef: (tableAlias, columnAlias) => `"${tableAlias}"."${columnAlias}"`,
-				selectAndAlias: (select, alias) => `${select} as "${alias}"`,
-				pagination: (skip, take) => {
-					let result: string[] = []
-					if (skip > 0) { result.push(`offset ${skip}`) }
-					if (take !== null) { result.push(`limit ${take}`) }
-					return result.join(' ')
-				},
-				order: (items) => `order by ${items.map(({ expr, order, nulls }) => `${expr} ${order} NULLS ${nulls}`).join(',')}`,
-			},
-		})
-	}
-	static createPostgresAdapter() {
-		return new SqlAdapter({
-			paramHolder: (index) => `$${index + 1}`,
-			adapter: {
-				tableAlias: (alias) => `as "${alias}"`,
-				columnRef: (tableAlias, columnAlias) => `"${tableAlias}"."${columnAlias}"`,
-				selectAndAlias: (select, alias) => `${select} as "${alias}"`,
-				pagination: (skip, take) => {
-					let result: string[] = []
-					if (skip > 0) { result.push(`offset ${skip}`) }
-					if (take !== null) { result.push(`limit ${take}`) }
-					return result.join(' ')
-				},
-				order: (items) => `order by ${items.map(({ expr, order, nulls }) => `${expr} ${order} NULLS ${nulls}`).join(',')}`,
-			},
-		})
-	}
-	constructor(
-		private opts: {
-			paramHolder: (index: number) => string,
-			adapter: SyntaxAdapter
-		}
-	) { }
+export interface SqlAdapter {
+	selectAll: <VT extends SqlViewTemplate>(view: SqlView<VT>) => SqlExecuteBundle<SelectResult<VT>[]>
+	selectOne: <VT extends SqlViewTemplate>(view: SqlView<VT>) => SqlExecuteBundle<null | SelectResult<VT>>
+	selectTotal: <VT extends SqlViewTemplate>(view: SqlView<VT>) => SqlExecuteBundle<number>
+	aggrateView: <VT1 extends SqlViewTemplate, VT2 extends SqlViewTemplate>(view: SqlView<VT1>, getTemplate: (createColumn: (getSegment: (vt: VT1) => Segment) => ColumnRef) => VT2) => SqlExecuteBundle<SelectResult<VT2>>
+}
 
-	private createRawSelectAll<VT extends SqlViewTemplate>(
+export function createSqlAdapter(opts: {
+	paramHolder: (index: number) => string,
+	adapter: SyntaxAdapter
+}): SqlAdapter {
+
+	const createRawSelectAll = <VT extends SqlViewTemplate>(
 		view: SqlView<VT>,
 		flag: BuildFlag,
-	) {
+	) => {
 		const paramArr: unknown[] = []
 		const helper: BuildSqlHelper = {
-			adapter: this.opts.adapter,
+			adapter: opts.adapter,
 			fetchColumnAlias: exec(() => {
 				const resultMapper = new Map<symbol | string, string>()
 				return (key) => {
@@ -75,7 +45,7 @@ export class SqlAdapter {
 				return (param: ParamType) => {
 					if (!(param instanceof Array)) { param = [param] }
 					return param.map((param) => {
-						const result = this.opts.paramHolder(paramArr.length)
+						const result = opts.paramHolder(paramArr.length)
 						paramArr.push(param)
 						return result
 					}).join(',')
@@ -131,16 +101,11 @@ export class SqlAdapter {
 		}
 	}
 
-
-	aggrateView<VT1 extends SqlViewTemplate, VT2 extends SqlViewTemplate>(
-		view: SqlView<VT1>,
-		getTemplate: (createColumn: (getSegment: (vt: VT1) => Segment) => ColumnRef) => VT2,
-	): SqlExecuteBundle<SelectResult<VT2>> {
+	const aggrateView: SqlAdapter['aggrateView'] = (view, getTemplate) => {
 		const rawSelect = view
 			.bracketIf((opts) => hasOneOf(opts.state, ['groupBy', 'skip', 'take']))
 			.mapTo((e, { createColumn }) => getTemplate((getSegment) => createColumn(getSegment(e))))
-			.pipe((view) => this.createRawSelectAll(view, { order: false }))
-
+			.pipe((view) => createRawSelectAll(view, { order: false }))
 		return {
 			sql: rawSelect.sql,
 			paramArr: rawSelect.paramArr,
@@ -150,31 +115,67 @@ export class SqlAdapter {
 			},
 		}
 	}
-
-	selectAll<VT extends SqlViewTemplate>(
-		view: SqlView<VT>,
-	): SqlExecuteBundle<SelectResult<VT>[]> {
-		const rawSelect = this.createRawSelectAll(view, { order: true })
+	const selectAll: SqlAdapter['selectAll'] = (view) => {
+		const rawSelect = createRawSelectAll(view, { order: true })
 		return {
 			sql: rawSelect.sql,
 			paramArr: rawSelect.paramArr,
-			formatter: (arr: { [key: string]: unknown }[]) => Promise.all(arr.map((raw) => rawSelect.rawFormatter(raw))),
+			formatter: (arr) => Promise.all(arr.map((raw) => rawSelect.rawFormatter(raw))),
 		}
 	}
-
-	selectOne<VT extends SqlViewTemplate>(
-		view: SqlView<VT>
-	): SqlExecuteBundle<null | SelectResult<VT>> {
-		const rawSelect = this.createRawSelectAll(view.take(1), { order: true })
+	const selectOne: SqlAdapter['selectOne'] = (view) => {
+		const rawSelect = createRawSelectAll(view.take(1), { order: true })
 		return {
 			sql: rawSelect.sql,
 			paramArr: rawSelect.paramArr,
-			formatter: async (arr: { [key: string]: unknown }[]) => arr.length === 0 ? null : rawSelect.rawFormatter(arr[0]),
+			formatter: async (arr) => arr.length === 0 ? null : rawSelect.rawFormatter(arr[0]),
 		}
 	}
-
-	selectTotal<VT extends SqlViewTemplate>(view: SqlView<VT>): SqlExecuteBundle<number> {
-		return this.aggrateView(view, (createColumn) => createColumn(() => sql`count(*)`).format((raw) => Number(raw)).withNull(false))
+	const selectTotal: SqlAdapter['selectTotal'] = (view) => {
+		return aggrateView(view, (createColumn) => createColumn(() => sql`count(*)`).format((raw) => Number(raw)).withNull(false))
 	}
+
+	return {
+		aggrateView: aggrateView,
+		selectAll: selectAll,
+		selectOne: selectOne,
+		selectTotal: selectTotal,
+	}
+}
+
+export function createSqlAdapterForMysql() {
+
+	return createSqlAdapter({
+		paramHolder: () => `?`,
+		adapter: {
+			tableAlias: (alias) => `"${alias}"`,
+			columnRef: (tableAlias, columnAlias) => `"${tableAlias}"."${columnAlias}"`,
+			selectAndAlias: (select, alias) => `${select} as "${alias}"`,
+			pagination: (skip, take) => {
+				let result: string[] = []
+				if (skip > 0) { result.push(`offset ${skip}`) }
+				if (take !== null) { result.push(`limit ${take}`) }
+				return result.join(' ')
+			},
+			order: (items) => `order by ${items.map(({ expr, order, nulls }) => `${expr} ${order} NULLS ${nulls}`).join(',')}`,
+		},
+	})
+}
+export function createSqlAdapterForPostgres() {
+	return createSqlAdapter({
+		paramHolder: (index) => `$${index + 1}`,
+		adapter: {
+			tableAlias: (alias) => `as "${alias}"`,
+			columnRef: (tableAlias, columnAlias) => `"${tableAlias}"."${columnAlias}"`,
+			selectAndAlias: (select, alias) => `${select} as "${alias}"`,
+			pagination: (skip, take) => {
+				let result: string[] = []
+				if (skip > 0) { result.push(`offset ${skip}`) }
+				if (take !== null) { result.push(`limit ${take}`) }
+				return result.join(' ')
+			},
+			order: (items) => `order by ${items.map(({ expr, order, nulls }) => `${expr} ${order} NULLS ${nulls}`).join(',')}`,
+		},
+	})
 }
 

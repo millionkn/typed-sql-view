@@ -1,4 +1,4 @@
-import { SqlAdapter, createSqlView, sql } from '../src/index.js'
+import { createSqlAdapter, createSqlView, sql } from '../src/index.js'
 import z from 'zod'
 
 
@@ -42,7 +42,7 @@ const view = companyTableDefine
 // .mapTo((e) => e.base)
 
 
-const selectAll = new SqlAdapter({
+const selectAll = createSqlAdapter({
 	paramHolder: (index) => {
 		return `$${index + 1}`
 	},

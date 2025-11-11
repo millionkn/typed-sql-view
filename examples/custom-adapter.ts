@@ -1,11 +1,12 @@
-import { SqlAdapter, createSqlView, sql, SqlExecuteBundle } from '@millionkn/typed-sql-view'
+import { createSqlAdapter, createSqlAdapterForMysql, createSqlAdapterForPostgres, createSqlView, sql } from '@millionkn/typed-sql-view'
+import type { SqlAdapter, SqlExecuteBundle } from '@millionkn/typed-sql-view'
 
 // 自定义适配器示例
 // 展示如何为不同的数据库创建适配器
 
 // 1. SQLite 适配器
-export const createSqliteAdapter = () => {
-	return new SqlAdapter({
+export const createSqliteAdapter = (): SqlAdapter => {
+	return createSqlAdapter({
 		paramHolder: () => '?',
 		adapter: {
 			tableAlias: (alias) => `"${alias}"`,
@@ -30,8 +31,8 @@ export const createSqliteAdapter = () => {
 }
 
 // 2. Oracle 适配器
-export const createOracleAdapter = () => {
-	return new SqlAdapter({
+export const createOracleAdapter = (): SqlAdapter => {
+	return createSqlAdapter({
 		paramHolder: (index) => `:param${index + 1}`,
 		adapter: {
 			tableAlias: (alias) => `"${alias}"`,
@@ -56,8 +57,8 @@ export const createOracleAdapter = () => {
 }
 
 // 3. SQL Server 适配器
-export const createSqlServerAdapter = () => {
-	return new SqlAdapter({
+export const createSqlServerAdapter = (): SqlAdapter => {
+	return createSqlAdapter({
 		paramHolder: (index) => `@param${index + 1}`,
 		adapter: {
 			tableAlias: (alias) => `[${alias}]`,
@@ -103,7 +104,7 @@ export const createCustomAdapter = (options: {
 		}
 	}
 
-	return new SqlAdapter({
+	return createSqlAdapter({
 		paramHolder: getParamHolder(),
 		adapter: {
 			tableAlias: (alias) => quote(alias),
@@ -136,76 +137,87 @@ export const createCustomAdapter = (options: {
 }
 
 // 5. 扩展适配器（添加自定义功能）
-export class ExtendedSqlAdapter extends SqlAdapter {
-	constructor(
-		private baseAdapter: SqlAdapter,
-		private customOptions: {
-			enableQueryCache?: boolean
-			customFormatters?: Map<string, (value: any) => any>
-			queryHooks?: {
-				beforeQuery?: (sql: string, params: any[]) => void
-				afterQuery?: (sql: string, params: any[], result: any) => void
-			}
+export type ExtendedSqlAdapter = SqlAdapter & {
+	withCustomFormatter<T>(columnName: string, formatter: (value: T) => any): ExtendedSqlAdapter
+}
+
+export const createExtendedSqlAdapter = (
+	baseAdapter: SqlAdapter,
+	customOptions: {
+		enableQueryCache?: boolean
+		customFormatters?: Map<string, (value: any) => any>
+		queryHooks?: {
+			beforeQuery?: (sql: string, params: any[]) => void
+			afterQuery?: (sql: string, params: any[], result: any) => void
 		}
-	) {
-		super({
-			paramHolder: (index) => '?', // 占位符，实际使用 baseAdapter
-			adapter: {
-				tableAlias: () => '',
-				columnRef: () => '',
-				selectAndAlias: () => '',
-				pagination: () => '',
-				order: () => '',
+	} = {}
+): ExtendedSqlAdapter => {
+	const options = {
+		enableQueryCache: customOptions.enableQueryCache ?? false,
+		customFormatters: customOptions.customFormatters ?? new Map<string, (value: any) => any>(),
+		queryHooks: customOptions.queryHooks ?? {},
+	}
+
+	const extended: ExtendedSqlAdapter = {
+		selectAll(view) {
+			const bundle = baseAdapter.selectAll(view)
+
+			options.queryHooks?.beforeQuery?.(bundle.sql, bundle.paramArr)
+
+			return {
+				...bundle,
+				formatter: async (results: any[]): Promise<any[]> => {
+					try {
+						const formattedResults = await bundle.formatter(results)
+						const mappedResults = options.customFormatters.size > 0
+							? formattedResults.map((row) => {
+								const next = { ...(row as Record<string, unknown>) }
+								options.customFormatters.forEach((formatter, key) => {
+									if (key in next) {
+										(next as any)[key] = formatter((next as any)[key])
+									}
+								})
+								return next
+							})
+							: formattedResults
+
+						options.queryHooks?.afterQuery?.(bundle.sql, bundle.paramArr, mappedResults)
+
+						return mappedResults
+					} catch (error) {
+						console.error('查询执行错误:', error)
+						throw error
+					}
+				},
 			}
-		})
+		},
+		selectOne: (view) => baseAdapter.selectOne(view),
+		selectTotal: (view) => baseAdapter.selectTotal(view),
+		aggrateView: (view, getTemplate) => baseAdapter.aggrateView(view, getTemplate),
+		withCustomFormatter(columnName, formatter) {
+			options.customFormatters.set(columnName, formatter)
+			return extended
+		},
 	}
 
-	// 重写 selectAll 方法添加缓存
-	selectAll<VT>(view: any): SqlExecuteBundle<any[]> {
-		const bundle = this.baseAdapter.selectAll(view)
-
-		// 执行查询前的钩子
-		this.customOptions.queryHooks?.beforeQuery?.(bundle.sql, bundle.paramArr)
-
-		// 返回修改后的bundle
-		return {
-			...bundle,
-			formatter: async (results: any[]): Promise<any[]> => {
-				try {
-					const formattedResults = await bundle.formatter(results)
-
-					// 执行查询后的钩子
-					this.customOptions.queryHooks?.afterQuery?.(bundle.sql, bundle.paramArr, formattedResults)
-
-					return formattedResults
-				} catch (error) {
-					console.error('查询执行错误:', error)
-					throw error
-				}
-			}
-		}
-	}
-
-	// 添加自定义格式化器
-	withCustomFormatter<T>(columnName: string, formatter: (value: T) => any) {
-		this.customOptions.customFormatters?.set(columnName, formatter)
-		return this
-	}
+	return extended
 }
 
 // 6. 数据库特定的优化适配器
 export const createOptimizedAdapter = (databaseType: 'mysql' | 'postgres' | 'sqlite') => {
-	const baseAdapter = SqlAdapter.createPostgresAdapter() // 默认使用 PostgreSQL
+	const baseAdapter = createSqlAdapterForPostgres() // 默认使用 PostgreSQL
+	const mysqlBase = createSqlAdapterForMysql()
+	const sqliteBase = createSqliteAdapter()
 
 	return {
-		...baseAdapter,
-
+		selectAll: baseAdapter.selectAll,
+		selectOne: baseAdapter.selectOne,
+		selectTotal: baseAdapter.selectTotal,
+		aggrateView: baseAdapter.aggrateView,
 		// MySQL 特定优化
 		mysql: databaseType === 'mysql' ? {
-			...SqlAdapter.createMySqlAdapter(),
-			// 添加 MySQL 特定的优化
-			selectAll: async <VT>(view: any) => {
-				const bundle = SqlAdapter.createMySqlAdapter().selectAll(view)
+			selectAll: <VT>(view: any) => {
+				const bundle = mysqlBase.selectAll(view)
 
 				// MySQL 特定的查询优化
 				const optimizedSql = bundle.sql
@@ -213,18 +225,20 @@ export const createOptimizedAdapter = (databaseType: 'mysql' | 'postgres' | 'sql
 					.replace(/nulls\s+(first|last)/gi, '') // MySQL 不支持 nulls first/last
 
 				return {
-					...bundle,
-					sql: optimizedSql
+					sql: optimizedSql,
+					paramArr: bundle.paramArr,
+					formatter: bundle.formatter,
 				}
-			}
+			},
+			selectOne: mysqlBase.selectOne,
+			selectTotal: mysqlBase.selectTotal,
+			aggrateView: mysqlBase.aggrateView,
 		} : null,
 
 		// SQLite 特定优化
 		sqlite: databaseType === 'sqlite' ? {
-			...createSqliteAdapter(),
-			// 添加 SQLite 特定的优化
-			selectAll: async <VT>(view: any) => {
-				const bundle = createSqliteAdapter().selectAll(view)
+			selectAll: <VT>(view: any) => {
+				const bundle = sqliteBase.selectAll(view)
 
 				// SQLite 特定的查询优化
 				const optimizedSql = bundle.sql
@@ -232,10 +246,14 @@ export const createOptimizedAdapter = (databaseType: 'mysql' | 'postgres' | 'sql
 					.replace(/nulls\s+(first|last)/gi, '') // SQLite 不支持 nulls first/last
 
 				return {
-					...bundle,
-					sql: optimizedSql
+					sql: optimizedSql,
+					paramArr: bundle.paramArr,
+					formatter: bundle.formatter,
 				}
-			}
+			},
+			selectOne: sqliteBase.selectOne,
+			selectTotal: sqliteBase.selectTotal,
+			aggrateView: sqliteBase.aggrateView,
 		} : null,
 	}
 }
@@ -286,8 +304,8 @@ export async function runCustomAdapterExamples() {
 	}
 
 	// 使用扩展适配器
-	const extendedAdapter = new ExtendedSqlAdapter(
-		SqlAdapter.createPostgresAdapter(),
+	const extendedAdapter = createExtendedSqlAdapter(
+		createSqlAdapterForPostgres(),
 		{
 			enableQueryCache: true,
 			customFormatters: new Map([

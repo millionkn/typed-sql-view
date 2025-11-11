@@ -268,13 +268,14 @@ const complexQuery = userTable
 ### 使用内置适配器
 
 ```typescript
-import { SqlAdapter } from '@millionkn/typed-sql-view'
+import { createSqlAdapterForPostgres, createSqlAdapterForMysql } from '@millionkn/typed-sql-view'
+import type { SqlAdapter } from '@millionkn/typed-sql-view'
 
 // PostgreSQL适配器
-const pgAdapter = SqlAdapter.createPostgresAdapter()
+const pgAdapter: SqlAdapter = createSqlAdapterForPostgres()
 
-// MySQL适配器  
-const mysqlAdapter = SqlAdapter.createMySqlAdapter()
+// MySQL适配器
+const mysqlAdapter: SqlAdapter = createSqlAdapterForMysql()
 
 // 执行查询
 const result = await pgAdapter.selectAll(userTable)
@@ -283,7 +284,10 @@ const result = await pgAdapter.selectAll(userTable)
 ### 自定义适配器
 
 ```typescript
-const customAdapter = new SqlAdapter({
+import { createSqlAdapter } from '@millionkn/typed-sql-view'
+import type { SqlAdapter } from '@millionkn/typed-sql-view'
+
+const customAdapter: SqlAdapter = createSqlAdapter({
   paramHolder: (index) => `?`, // 参数占位符
   adapter: {
     tableAlias: (alias) => `"${alias}"`, // 表别名格式
@@ -295,7 +299,7 @@ const customAdapter = new SqlAdapter({
       if (take !== null) result.push(`limit ${take}`)
       return result.join(' ')
     },
-    order: (items) => `order by ${items.map(({ expr, order, nulls }) => 
+    order: (items) => `order by ${items.map(({ expr, order, nulls }) =>
       `${expr} ${order} nulls ${nulls}`
     ).join(', ')}`, // 排序语法
   }
@@ -307,7 +311,7 @@ const customAdapter = new SqlAdapter({
 ### 查询方法
 
 ```typescript
-const adapter = SqlAdapter.createPostgresAdapter()
+const adapter = createSqlAdapterForPostgres()
 
 // 查询多条记录
 const users: User[] = await adapter.selectAll(userTable)

@@ -1,4 +1,5 @@
-import { createSqlView, sql, SqlAdapter, SqlExecuteBundle } from '@millionkn/typed-sql-view'
+import { createSqlView, sql, createSqlAdapterForPostgres } from '@millionkn/typed-sql-view'
+import type { SqlAdapter, SqlExecuteBundle } from '@millionkn/typed-sql-view'
 
 // 高级用法示例
 // 展示复杂查询、性能优化和高级特性
@@ -266,7 +267,7 @@ export const batchOperationQueries = {
 
 // 8. 使用示例
 export async function runAdvancedExamples() {
-	const adapter = SqlAdapter.createPostgresAdapter()
+	const adapter = createSqlAdapterForPostgres()
 
 	const sqlQuery = async <R>(getBundle: (adapter: SqlAdapter) => SqlExecuteBundle<R>) => {
 		const bundle = getBundle(adapter)

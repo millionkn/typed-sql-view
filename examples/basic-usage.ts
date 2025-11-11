@@ -1,4 +1,5 @@
-import { createSqlView, sql, SqlAdapter, SqlExecuteBundle } from '@millionkn/typed-sql-view'
+import { createSqlView, sql, createSqlAdapterForPostgres } from '@millionkn/typed-sql-view'
+import type { SqlAdapter, SqlExecuteBundle } from '@millionkn/typed-sql-view'
 
 // 基本用法示例 - 修正版本
 // 展示如何创建表视图、执行查询和数据处理
@@ -206,7 +207,7 @@ export const paginationQueries = {
 
 // 8. 使用示例
 export async function runBasicExamples() {
-	const adapter = SqlAdapter.createPostgresAdapter()
+	const adapter = createSqlAdapterForPostgres()
 
 	const sqlQuery = async <R>(getBundle: (adapter: SqlAdapter) => SqlExecuteBundle<R>) => {
 		const bundle = getBundle(adapter)
