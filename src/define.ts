@@ -272,7 +272,7 @@ export class SelectBodyStruct {
 		})
 		exec(() => {
 			if (this.opts.order.length === 0) { return }
-			buildResult.push(new Holder((helper) => helper.adapter.order(this.opts.order.map((item) => {
+			buildResult.push(' ', new Holder((helper) => helper.adapter.order(this.opts.order.map((item) => {
 				return {
 					expr: parseAndEffectOnHelper(item.expr, helper),
 					order: item.order,
