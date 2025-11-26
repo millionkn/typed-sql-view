@@ -237,17 +237,11 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 					instance.emitInnerUsed()
 				},
 				finalize: (flag) => {
-					const condationExpr = condationBuilderCtx.buildExpr()
-					if (condationExpr.length === 0) {
-						return instance.finalize({
-							flag,
-							bracketIf: () => false,
-						})
-					}
 					const sqlBody = instance.finalize({
 						flag,
 						bracketIf: (bodyOpts) => hasOneOf(bodyOpts.state, ['take', 'skip'])
 					})
+					const condationExpr = condationBuilderCtx.buildExpr()
 					const target = sqlBody.opts.groupBy.length === 0 ? sqlBody.opts.where : sqlBody.opts.having
 					target.push({
 						expr: condationExpr,
@@ -441,7 +435,10 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 			})
 			return {
 				template: instance.template,
-				emitInnerUsed: instance.emitInnerUsed,
+				emitInnerUsed: () => {
+					builderCtx?.emitInnerUsed()
+					instance.emitInnerUsed()
+				},
 				finalize: (flag) => {
 					if (!flag.order || !builderCtx) {
 						return instance.finalize({

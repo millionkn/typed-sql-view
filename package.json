@@ -1,6 +1,6 @@
 {
 	"name": "@millionkn/typed-sql-view",
-	"version": "0.7.3",
+	"version": "0.7.5",
 	"description": "",
 	"type": "module",
 	"module": "./dist/index.js",
