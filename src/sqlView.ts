@@ -165,6 +165,20 @@ function createJoin<N extends boolean, VT1 extends SqlViewTemplate, VT extends S
 	}
 }
 
+function createMapTools() {
+	return {
+		assertWithNull: <N extends boolean, VT2 extends SqlViewTemplate>(withNull: N, template: VT2) => iterateTemplate(template, (c) => c instanceof ColumnRef, (c) => {
+			return c.withNull(withNull)
+		}) as AssertWithNull<N, VT2>,
+		createColumn: (segment: Segment) => new ColumnRef({
+			withNull: true,
+			format: async (raw) => raw,
+			builderCtx: segment[sym].createBuilderCtx(),
+		})
+	}
+}
+
+
 export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 	[sym] = {
 		type: 'sqlView' as const,
@@ -252,60 +266,53 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 		})
 	}
 
-	groupBy<const KT extends SqlViewTemplate, const VT extends SqlViewTemplate>(
-		getKeyTemplate: (vt: VT1) => KT,
-		getAggrateValues: (createColumn: (getSegment: (vt: VT1) => Segment) => ColumnRef<boolean, unknown>) => VT,
-	): SqlView<{ keys: KT, aggrateValues: VT }> {
-		return new SqlView(() => {
-			const instance = proxyBuilder<VT1>(this.createStructBuilder(), false)
-			const keys = getKeyTemplate(instance.template)
-			let noKeys = true
-			iterateTemplate(keys, (c) => c instanceof ColumnRef, (c) => {
-				noKeys = false
-			})
-			const aggrateValues = getAggrateValues((getSegment) => new ColumnRef({
-				withNull: true,
-				format: async (raw) => raw,
-				builderCtx: getSegment(instance.template)[sym].createBuilderCtx(),
-			}))
-			return {
-				template: {
-					keys,
-					aggrateValues,
-				},
-				emitInnerUsed: () => {
-					iterateTemplate(keys, (c) => c instanceof ColumnRef, (c) => {
-						ColumnRef.getOpts(c).builderCtx.emitInnerUsed()
-					})
-					iterateTemplate(aggrateValues, (c) => c instanceof ColumnRef, (c) => {
-						ColumnRef.getOpts(c).builderCtx.emitInnerUsed()
-					})
-					instance.emitInnerUsed()
-				},
-				finalize: () => {
-					if (noKeys) {
-						return instance.finalize({
-							flag: {
-								order: false
-							},
-							bracketIf: (bodyOpts) => bodyOpts.state.size !== 0,
-						})
-					}
-					const sqlBody = instance.finalize({
-						flag: {
-							order: false,
+	groupBy<const KT extends SqlViewTemplate>(getGroupBy: (vt: VT1, tools: ReturnType<typeof createMapTools>) => KT) {
+		return {
+			mapTo: <const VT extends SqlViewTemplate>(getSelect: (keys: KT, tools: ReturnType<typeof createMapTools>) => VT): SqlView<VT> => {
+				return new SqlView(() => {
+					const instance = proxyBuilder<VT1>(this.createStructBuilder(), false)
+					const keys = getGroupBy(instance.template, createMapTools())
+					let noKeys = true
+					const selectTarget = getSelect(keys, createMapTools())
+					return {
+						template: selectTarget,
+						emitInnerUsed: () => {
+							iterateTemplate(keys, (c) => c instanceof ColumnRef, (c) => {
+								noKeys = false
+								ColumnRef.getOpts(c).builderCtx.emitInnerUsed()
+							})
+							iterateTemplate(selectTarget, (c) => c instanceof ColumnRef, (c) => {
+								ColumnRef.getOpts(c).builderCtx.emitInnerUsed()
+							})
+							instance.emitInnerUsed()
 						},
-						bracketIf: (bodyOpts) => hasOneOf(bodyOpts.state, ['order', 'groupBy', 'having', 'skip', 'take'])
-					})
-					iterateTemplate(keys, (c) => c instanceof ColumnRef, (c) => {
-						sqlBody.opts.groupBy.push({
-							expr: ColumnRef.getOpts(c).builderCtx.buildExpr(),
-						})
-					})
-					return sqlBody
-				}
+						finalize: () => {
+							if (noKeys) {
+								return instance.finalize({
+									flag: {
+										order: false
+									},
+									bracketIf: (bodyOpts) => bodyOpts.state.size !== 0,
+								})
+							}
+							const sqlBody = instance.finalize({
+								flag: {
+									order: false,
+								},
+								bracketIf: (bodyOpts) => hasOneOf(bodyOpts.state, ['order', 'groupBy', 'having', 'skip', 'take'])
+							})
+							iterateTemplate(keys, (c) => c instanceof ColumnRef, (c) => {
+								sqlBody.opts.groupBy.push({
+									expr: ColumnRef.getOpts(c).builderCtx.buildExpr(),
+								})
+							})
+							return sqlBody
+						}
+					}
+				})
 			}
-		})
+		}
+
 	}
 
 
@@ -374,24 +381,12 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 
 	mapTo<const VT extends SqlViewTemplate>(getTemplate: (
 		e: VT1,
-		opts: {
-			createColumn: (getSegment: Segment) => ColumnRef,
-			assertWithNull: <N extends boolean, VT2 extends SqlViewTemplate>(withNull: N, template: VT2) => AssertWithNull<N, VT2>
-		}
+		tools: ReturnType<typeof createMapTools>,
 	) => VT): SqlView<VT> {
 		return new SqlView(() => {
 			const base = this.createStructBuilder()
 			return {
-				template: getTemplate(base.template, {
-					assertWithNull: <N extends boolean, VT2 extends SqlViewTemplate>(withNull: N, template: VT2) => iterateTemplate(template, (c) => c instanceof ColumnRef, (c) => {
-						return c.withNull(withNull)
-					}) as AssertWithNull<N, VT2>,
-					createColumn: (segment: Segment) => new ColumnRef({
-						withNull: true,
-						format: async (raw) => raw,
-						builderCtx: segment[sym].createBuilderCtx(),
-					})
-				}),
+				template: getTemplate(base.template, createMapTools()),
 				emitInnerUsed: base.emitInnerUsed,
 				finalize: base.finalize,
 			}
@@ -417,8 +412,8 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 	}
 
 	order(
-		order: 'ASC' | 'DESC',
-		nulls: 'FIRST' | 'LAST',
+		order: `ASC` | `DESC` | 'asc' | 'desc',
+		nulls: `FIRST` | `LAST` | 'first' | 'last',
 		getExpr: (template: VT1) => false | null | undefined | Segment,
 	): SqlView<VT1> {
 		return new SqlView(() => {
@@ -451,8 +446,8 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 						bracketIf: (bodyOpts) => hasOneOf(bodyOpts.state, ['skip', 'take']),
 					})
 					sqlBody.opts.order.unshift({
-						order,
-						nulls,
+						order: order.toUpperCase() as 'ASC' | 'DESC',
+						nulls: nulls.toUpperCase() as 'FIRST' | 'LAST',
 						expr: builderCtx.buildExpr(),
 					})
 					return sqlBody
