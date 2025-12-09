@@ -266,53 +266,51 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 		})
 	}
 
-	groupBy<const KT extends SqlViewTemplate>(getGroupBy: (vt: VT1, tools: ReturnType<typeof createMapTools>) => KT) {
-		return {
-			mapTo: <const VT extends SqlViewTemplate>(getSelect: (keys: KT, tools: ReturnType<typeof createMapTools>) => VT): SqlView<VT> => {
-				return new SqlView(() => {
-					const instance = proxyBuilder<VT1>(this.createStructBuilder(), false)
-					const keys = getGroupBy(instance.template, createMapTools())
-					let noKeys = true
-					const selectTarget = getSelect(keys, createMapTools())
-					return {
-						template: selectTarget,
-						emitInnerUsed: () => {
-							iterateTemplate(keys, (c) => c instanceof ColumnRef, (c) => {
-								noKeys = false
-								ColumnRef.getOpts(c).builderCtx.emitInnerUsed()
-							})
-							iterateTemplate(selectTarget, (c) => c instanceof ColumnRef, (c) => {
-								ColumnRef.getOpts(c).builderCtx.emitInnerUsed()
-							})
-							instance.emitInnerUsed()
-						},
-						finalize: () => {
-							if (noKeys) {
-								return instance.finalize({
-									flag: {
-										order: false
-									},
-									bracketIf: (bodyOpts) => bodyOpts.state.size !== 0,
-								})
-							}
-							const sqlBody = instance.finalize({
-								flag: {
-									order: false,
-								},
-								bracketIf: (bodyOpts) => hasOneOf(bodyOpts.state, ['order', 'groupBy', 'having', 'skip', 'take'])
-							})
-							iterateTemplate(keys, (c) => c instanceof ColumnRef, (c) => {
-								sqlBody.opts.groupBy.push({
-									expr: ColumnRef.getOpts(c).builderCtx.buildExpr(),
-								})
-							})
-							return sqlBody
-						}
+	groupBy<const KT extends SqlViewTemplate, const VT extends SqlViewTemplate>(
+		getGroupBy: (vt: VT1, tools: ReturnType<typeof createMapTools>) => KT,
+		getSelect: (keys: KT, tools: ReturnType<typeof createMapTools>) => VT,
+	) {
+		return new SqlView(() => {
+			const instance = proxyBuilder<VT1>(this.createStructBuilder(), false)
+			const keys = getGroupBy(instance.template, createMapTools())
+			let noKeys = true
+			const selectTarget = getSelect(keys, createMapTools())
+			return {
+				template: selectTarget,
+				emitInnerUsed: () => {
+					iterateTemplate(keys, (c) => c instanceof ColumnRef, (c) => {
+						noKeys = false
+						ColumnRef.getOpts(c).builderCtx.emitInnerUsed()
+					})
+					iterateTemplate(selectTarget, (c) => c instanceof ColumnRef, (c) => {
+						ColumnRef.getOpts(c).builderCtx.emitInnerUsed()
+					})
+					instance.emitInnerUsed()
+				},
+				finalize: () => {
+					if (noKeys) {
+						return instance.finalize({
+							flag: {
+								order: false
+							},
+							bracketIf: (bodyOpts) => bodyOpts.state.size !== 0,
+						})
 					}
-				})
+					const sqlBody = instance.finalize({
+						flag: {
+							order: false,
+						},
+						bracketIf: (bodyOpts) => hasOneOf(bodyOpts.state, ['order', 'groupBy', 'having', 'skip', 'take'])
+					})
+					iterateTemplate(keys, (c) => c instanceof ColumnRef, (c) => {
+						sqlBody.opts.groupBy.push({
+							expr: ColumnRef.getOpts(c).builderCtx.buildExpr(),
+						})
+					})
+					return sqlBody
+				}
 			}
-		}
-
+		})
 	}
 
 
