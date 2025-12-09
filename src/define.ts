@@ -93,17 +93,48 @@ export const sql = (strings: TemplateStringsArray, ...values: Array<
 		}
 	})
 }
-export const rawSql = (sql: string): Segment => {
-	if (sql.length === 0) {
-		throw new Error('sql length is 0')
+export const rawSql = exec(() => {
+	let _nsIndex = 0
+	let getSegment = (str: string): Segment => {
+		throw new Error(`can't find magic string'${str}'`)
 	}
-	return new InnerSegment(() => {
-		return {
-			emitInnerUsed: () => { },
-			buildExpr: () => [sql],
-		}
-	})
-}
+	return (getSqlStr: (addSegment: (segment: Segment) => string) => string): Segment => {
+		return new InnerSegment(() => {
+			const nsIndex = _nsIndex += 1
+			let index = 0
+			const saved = new Map<string, Segment>()
+			const preGetSegment = getSegment
+			getSegment = (str: string) => saved.get(str) ?? preGetSegment(str)
+			try {
+				const builderCtxArr = getSqlStr((segment) => {
+					const key = `holder_${nsIndex}_${index++}`
+					saved.set(key, segment)
+					return `''""\`\`${key}''""\`\``
+				}).split(`''""\`\``).map((e, i) => {
+					if (i % 2 === 0) {
+						return {
+							emitInnerUsed: () => { },
+							buildExpr: () => [e],
+						}
+					} else {
+						return getSegment(e)[sym].createBuilderCtx()
+					}
+				})
+				return {
+					emitInnerUsed: () => {
+						builderCtxArr.forEach((e) => e.emitInnerUsed())
+					},
+					buildExpr: () => builderCtxArr.map((e) => e.buildExpr()).flat(1),
+				}
+			} catch (e) {
+				throw e
+			} finally {
+				getSegment = preGetSegment
+			}
+		})
+	}
+})
+
 
 export class ColumnRef<N extends boolean = boolean, R = unknown> extends Segment {
 	[sym] = {
@@ -142,6 +173,7 @@ export class ColumnRef<N extends boolean = boolean, R = unknown> extends Segment
 }
 
 export type SqlViewTemplate = DeepTemplate<ColumnRef>
+
 
 type _Relation<N extends boolean, VT extends readonly SqlViewTemplate[] | { readonly [key: string]: SqlViewTemplate }> = {
 	[key in keyof VT]
