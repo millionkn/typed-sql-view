@@ -268,13 +268,17 @@ export class SqlView<const VT1 extends SqlViewTemplate> extends Segment {
 
 	groupBy<const KT extends SqlViewTemplate, const VT extends SqlViewTemplate>(
 		getGroupBy: (vt: VT1, tools: ReturnType<typeof createMapTools>) => KT,
-		getSelect: (keys: KT, tools: ReturnType<typeof createMapTools>) => VT,
+		getSelect: (keys: KT, createColumn: (getSegment: (vt: VT1) => Segment) => ColumnRef) => VT,
 	) {
 		return new SqlView(() => {
 			const instance = proxyBuilder<VT1>(this.createStructBuilder(), false)
 			const keys = getGroupBy(instance.template, createMapTools())
 			let noKeys = true
-			const selectTarget = getSelect(keys, createMapTools())
+			const selectTarget = getSelect(keys, (getSegment) => new ColumnRef({
+				withNull: true,
+				format: async (raw) => raw,
+				builderCtx: getSegment(instance.template)[sym].createBuilderCtx(),
+			}))
 			return {
 				template: selectTarget,
 				emitInnerUsed: () => {
