@@ -31,14 +31,15 @@ const view = companyTableDefine
 	.lateralJoin('left join lazy withNull', (e) => {
 		return personTableDefine
 			.andWhere((e2) => sql`${e2.companyId} = ${e.companyId}`)
-			.groupBy((e2) => ({ companyId: e2.companyId }), (column) => {
+			.groupBy((e2) => ({ companyId: e2.companyId }), (key, column) => {
 				return {
+					companyId: key.companyId,
 					count: column(() => sql`count(*)`).withNull(false).format((raw) => z.number().parse(raw)),
 				}
 			})
-			.andWhere((e2) => sql`${e2.aggrateValues.count} > ${5}`)
+			.andWhere((e2) => sql`${e2.count} > ${5}`)
 	})
-	.on((e) => sql`${e.base.companyId} = ${e.extra.keys.companyId}`)
+	.on((e) => sql`${e.base.companyId} = ${e.extra.companyId}`)
 // .mapTo((e) => e.base)
 
 
